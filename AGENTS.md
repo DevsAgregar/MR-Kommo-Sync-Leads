@@ -31,6 +31,7 @@ Regras complementares:
 
 - nao deixar alteracoes locais sem commit ao encerrar uma tarefa concluida;
 - nunca considerar a tarefa concluida sem `commit` e `push` publicados em `origin` e `deckdev` quando os dois remotos estiverem configurados;
+- esta politica de Git e obrigatoria e deve prevalecer mesmo quando outras regras do projeto nao mencionarem versionamento explicitamente;
 - se o push falhar por credencial, permissao, conflito ou rede, relatar o bloqueio claramente;
 - evitar commits que misturem assuntos sem relacao;
 - usar preferencialmente mensagens no padrao Conventional Commits.
@@ -344,6 +345,8 @@ Sem acesso a terminal, os checkboxes no `markdown_description` sao fallback sufi
 
 Observacao de implementacao atual:
 
+- quando houver acesso a API oficial ou ao transporte privado com suporte a checklist, os criterios devem ir para a checklist nativa e nao para a descricao
+- o uso de `markdown_description` com checkboxes e apenas fallback para cenarios realmente sem suporte a checklist nativa
 - no modo `session_http`, o pacote ja cria checklist nativa por rotas privadas do frontend
 - nesse modo, o fallback em `markdown_description` so deve ocorrer quando o transporte privado realmente nao estiver disponivel
 - ao concluir task em `session_http`, os itens da checklist nativa devem ser resolvidos pelo proprio transporte privado
