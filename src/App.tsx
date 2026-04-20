@@ -7,9 +7,7 @@ import {
   HeartHandshake,
   Loader2,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
-  UserCheck,
   WalletCards,
   XCircle
 } from "lucide-react";
@@ -50,9 +48,11 @@ type CommandState = {
   running: boolean;
   message: string;
   ok: boolean | null;
+  task?: string;
 };
 
 type Page = "sync" | "review";
+type SyncTask = "clinic" | "operational" | "kommo" | "preview" | "all" | "quick" | "full";
 
 const fallbackSnapshot: Snapshot = {
   previewSummary: {
@@ -204,12 +204,14 @@ function SyncPage({
   snapshot,
   desktop,
   command,
-  onUpdate
+  onQuickUpdate,
+  onFullUpdate
 }: {
   snapshot: Snapshot;
   desktop: boolean;
   command: CommandState;
-  onUpdate: () => void;
+  onQuickUpdate: () => void;
+  onFullUpdate: () => void;
 }) {
   const summary = snapshot.previewSummary;
   const actions = summary?.action_counts ?? {};
@@ -222,22 +224,32 @@ function SyncPage({
       <Card className="p-7">
         <div className="flex items-start justify-between gap-6">
           <div>
-            <Pill tone={desktop ? "ok" : "warn"}>{desktop ? "conectado aos arquivos locais" : "modo visual"}</Pill>
+            <Pill tone={desktop ? "ok" : "warn"}>{desktop ? "tudo roda localmente no computador" : "modo visual"}</Pill>
             <h2 className="mt-5 max-w-3xl text-4xl font-semibold leading-tight tracking-normal text-white">
-              Atualizar o Kommo com os dados da clínica
+              Atualizar os dados do Kommo
             </h2>
             <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
-              Clique no botão abaixo. O app busca os dados atuais, compara com os leads e prepara as alterações seguras para revisão.
+              Escolha o tipo de atualização. A rápida é a recomendada para o dia a dia. A completa reprocessa tudo desde o início e demora mais.
             </p>
           </div>
-          <button
-            className="inline-flex h-14 shrink-0 items-center gap-3 rounded-2xl bg-emerald-400 px-6 text-base font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
-            onClick={onUpdate}
-            disabled={command.running}
-          >
-            {command.running ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
-            {command.running ? "Atualizando..." : "Atualizar agora"}
-          </button>
+          <div className="flex shrink-0 flex-col gap-3">
+            <button
+              className="inline-flex h-14 items-center gap-3 rounded-2xl bg-emerald-400 px-6 text-base font-semibold text-slate-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+              onClick={onQuickUpdate}
+              disabled={command.running}
+            >
+              {command.running && command.task === "quick" ? <Loader2 className="h-5 w-5 animate-spin" /> : <RefreshCw className="h-5 w-5" />}
+              Atualização rápida
+            </button>
+            <button
+              className="inline-flex h-12 items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.05] px-5 text-sm font-semibold text-white transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+              onClick={onFullUpdate}
+              disabled={command.running}
+            >
+              {command.running && command.task === "full" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Clock3 className="h-4 w-4" />}
+              Atualização completa
+            </button>
+          </div>
         </div>
 
         {command.message ? (
@@ -245,6 +257,26 @@ function SyncPage({
             {command.message}
           </div>
         ) : null}
+
+        <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-5">
+          <h3 className="text-lg font-semibold text-white">O que cada opção faz</h3>
+          <div className="mt-4 grid grid-cols-4 gap-3">
+            {[
+              ["Rápida", "Atualiza só o que importa no dia a dia", "usa clínica incremental, agenda só dos pacientes relevantes e Kommo incremental"],
+              ["Completa", "Reprocessa tudo do começo", "serve para auditoria, correção ou revisão geral"],
+              ["Resultado", "Gera a prévia no final", "o painel já reflete o estado vigente depois da execução"],
+              ["Aplicação", "Não envia nada direto ao Kommo", "apenas prepara o que está seguro e separa o que precisa revisar"]
+            ].map(([step, title, text]) => (
+              <div key={title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center gap-3">
+                  <div className="rounded-full bg-emerald-400 px-3 py-1 text-xs font-bold text-slate-950">{step}</div>
+                  <span className="font-semibold text-white">{title}</span>
+                </div>
+                <p className="mt-3 text-sm leading-5 text-slate-400">{text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="mt-7">
           <DataFreshness snapshot={snapshot} />
@@ -275,6 +307,24 @@ function SyncPage({
           <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
             <p className="text-sm text-slate-400">Adicionar serviços</p>
             <p className="mt-2 text-2xl font-semibold text-white">{number(actions.merge)}</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-6">
+        <h3 className="text-xl font-semibold text-white">Quando usar cada uma</h3>
+        <div className="mt-5 grid grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-5">
+            <p className="text-lg font-semibold text-white">Atualização rápida</p>
+            <p className="mt-2 text-sm leading-6 text-slate-200">
+              Use no trabalho do dia a dia. Ela é mais rápida porque foca no que já é relevante para o Kommo.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+            <p className="text-lg font-semibold text-white">Atualização completa</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Use quando quiser revisar tudo do começo, corrigir base ou auditar o processo completo.
+            </p>
           </div>
         </div>
       </Card>
@@ -363,15 +413,24 @@ export default function App() {
   const [page, setPage] = useState<Page>("sync");
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
 
-  async function updateAll() {
-    setCommand({ running: true, message: "Atualizando Clínica, agenda, Kommo e prévia. Isso pode levar alguns minutos.", ok: null });
+  async function runSyncTask(task: SyncTask) {
+    const labels: Record<SyncTask, string> = {
+      quick: "Atualização rápida em andamento.",
+      full: "Atualização completa em andamento. Isso pode levar vários minutos.",
+      clinic: "Atualizando dados da clínica...",
+      operational: "Atualizando agenda, serviços e origem...",
+      kommo: "Atualizando dados do Kommo...",
+      preview: "Gerando nova prévia...",
+      all: "Atualizando tudo. Isso pode levar alguns minutos."
+    };
+    setCommand({ running: true, message: labels[task], ok: null, task });
     try {
-      const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("run_sync_task", { task: "all" });
+      const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("run_sync_task", { task });
       const done = result.logs.map((item) => item.label).join(" → ");
-      setCommand({ running: false, message: `Concluído: ${done}`, ok: true });
+      setCommand({ running: false, message: `Concluído: ${done}`, ok: true, task });
       await refresh();
     } catch (error) {
-      setCommand({ running: false, message: String(error), ok: false });
+      setCommand({ running: false, message: String(error), ok: false, task });
     }
   }
 
@@ -404,20 +463,30 @@ export default function App() {
                 onClick={() => setPage("sync")}
                 className={cx("h-11 rounded-xl px-5 text-sm font-semibold transition", page === "sync" ? "bg-white text-slate-950" : "text-slate-400 hover:text-white")}
               >
-                Atualizar
+                Rotina
               </button>
               <button
                 onClick={() => setPage("review")}
                 className={cx("h-11 rounded-xl px-5 text-sm font-semibold transition", page === "review" ? "bg-white text-slate-950" : "text-slate-400 hover:text-white")}
               >
-                Revisar
+                Pendências
               </button>
             </div>
           </div>
         </header>
 
         <div className="mt-7 flex-1">
-          {page === "sync" ? <SyncPage snapshot={snapshot} desktop={desktop} command={command} onUpdate={updateAll} /> : <ReviewPage snapshot={snapshot} />}
+          {page === "sync" ? (
+            <SyncPage
+              snapshot={snapshot}
+              desktop={desktop}
+              command={command}
+              onQuickUpdate={() => runSyncTask("quick")}
+              onFullUpdate={() => runSyncTask("full")}
+            />
+          ) : (
+            <ReviewPage snapshot={snapshot} />
+          )}
         </div>
       </div>
     </div>

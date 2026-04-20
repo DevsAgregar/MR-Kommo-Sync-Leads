@@ -1572,8 +1572,8 @@ def _resolver_periodo_vendas(args: argparse.Namespace) -> Optional[Tuple[str, st
         return None
 
     pode_perguntar = not args.sem_input and sys.stdin.isatty()
-    padrao_de = args.data_vendas_de or os.getenv("MIRELLA_DATA_VENDAS", DEFAULT_DATA_VENDAS)
-    padrao_ate = args.data_vendas_ate or os.getenv("MIRELLA_DATA_VENDAS_ATE", _hoje_br())
+    padrao_de = args.data_vendas_de or os.getenv("MIRELLA_DATA_VENDAS") or DEFAULT_DATA_VENDAS
+    padrao_ate = args.data_vendas_ate or os.getenv("MIRELLA_DATA_VENDAS_ATE") or _hoje_br()
 
     data_de = _prompt_data("Data inicial do relatorio de vendas", padrao_de, pode_perguntar)
     data_ate = _prompt_data("Data final do relatorio de vendas", padrao_ate, pode_perguntar)
@@ -1587,16 +1587,18 @@ def _resolver_periodo_pacientes(args: argparse.Namespace, store: SQLitePatientSt
     if args.reprocessar_pacientes:
         padrao_de = (
             args.data_pacientes_de
-            or os.getenv("MIRELLA_DATA_PACIENTES", DEFAULT_DATA_PACIENTES)
+            or os.getenv("MIRELLA_DATA_PACIENTES")
+            or DEFAULT_DATA_PACIENTES
         )
     else:
         padrao_de = (
             args.data_pacientes_de
             or store.get_default_start_date()
-            or os.getenv("MIRELLA_DATA_PACIENTES", DEFAULT_DATA_PACIENTES)
+            or os.getenv("MIRELLA_DATA_PACIENTES")
+            or DEFAULT_DATA_PACIENTES
         )
 
-    padrao_ate = args.data_pacientes_ate or os.getenv("MIRELLA_DATA_PACIENTES_ATE", _hoje_br())
+    padrao_ate = args.data_pacientes_ate or os.getenv("MIRELLA_DATA_PACIENTES_ATE") or _hoje_br()
     return _validar_periodo(padrao_de, padrao_ate, "pacientes")
 
 

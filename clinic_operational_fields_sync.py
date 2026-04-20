@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import logging
 import os
 import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -21,6 +23,8 @@ from login import BASE_URL, DEFAULT_DB_PATH, DEFAULT_EMAIL, DEFAULT_ENV_FILE, DE
 
 
 DEFAULT_TIMEOUT = 60
+DEFAULT_WORKERS = 4
+DEFAULT_KOMMO_DB_PATH = Path("mirella_kommo_leads.sqlite3")
 TIMELINE_BLOCKED_STATUSES = {
     "bloqueado",
     "falta justificada",
@@ -83,6 +87,18 @@ def _dedupe_keep_order(values: Iterable[str]) -> List[str]:
     return result
 
 
+def _normalize_name(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    text = _normalize_space(value)
+    if not text:
+        return None
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii").lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = " ".join(text.split())
+    return text or None
+
+
 class ClinicaAgilOperationalExtractor:
     def __init__(self, email: str, senha: str, timeout: int, logger: logging.Logger) -> None:
         self.email = email
@@ -112,6 +128,22 @@ class ClinicaAgilOperationalExtractor:
         agenda = self.session.get(f"{BASE_URL}/agenda", timeout=self.timeout)
         if agenda.status_code != 200:
             raise RuntimeError(f"Sessao sem acesso a agenda. HTTP {agenda.status_code}")
+
+    def export_cookies(self) -> Dict[str, str]:
+        return requests.utils.dict_from_cookiejar(self.session.cookies)
+
+    @classmethod
+    def from_cookies(
+        cls,
+        email: str,
+        senha: str,
+        timeout: int,
+        logger: logging.Logger,
+        cookies: Dict[str, str],
+    ) -> "ClinicaAgilOperationalExtractor":
+        instance = cls(email=email, senha=senha, timeout=timeout, logger=logger)
+        instance.session.cookies = requests.utils.cookiejar_from_dict(cookies, cookiejar=None, overwrite=True)
+        return instance
 
     def get_patient_edit_html(self, patient_id: int) -> str:
         response = self.session.get(f"{BASE_URL}/pacientes/editar/{patient_id}", timeout=self.timeout)
@@ -322,10 +354,57 @@ class PatientOperationalStore:
             sql += f" LIMIT {int(limit)}"
         return [int(row["patient_id"]) for row in self.conn.execute(sql)]
 
-    def replace_all(self, rows: Sequence[Dict[str, Any]]) -> None:
+    def matched_patient_ids(self, kommo_db_path: Path, limit: Optional[int] = None) -> List[int]:
+        kommo_db_path = Path(kommo_db_path)
+        if not kommo_db_path.exists():
+            return self.patient_ids(limit=limit)
+
+        patient_rows = [
+            (int(row["patient_id"]), _normalize_name(row["nome"]))
+            for row in self.conn.execute("SELECT patient_id, nome FROM patients")
+        ]
+        patient_name_counts: Dict[str, int] = {}
+        for _, name in patient_rows:
+            if name:
+                patient_name_counts[name] = patient_name_counts.get(name, 0) + 1
+
+        kommo_conn = sqlite3.connect(str(kommo_db_path))
+        kommo_conn.row_factory = sqlite3.Row
+        try:
+            lead_rows = [(_normalize_name(row["name"])) for row in kommo_conn.execute("SELECT name FROM kommo_leads")]
+        finally:
+            kommo_conn.close()
+
+        lead_name_counts: Dict[str, int] = {}
+        for name in lead_rows:
+            if name:
+                lead_name_counts[name] = lead_name_counts.get(name, 0) + 1
+
+        matched_ids: List[int] = []
+        for patient_id, name in patient_rows:
+            if not name:
+                continue
+            if patient_name_counts.get(name) == 1 and lead_name_counts.get(name) == 1:
+                matched_ids.append(patient_id)
+
+        matched_ids.sort()
+        if limit:
+            matched_ids = matched_ids[: int(limit)]
+        return matched_ids
+
+    def _write_rows(self, rows: Sequence[Dict[str, Any]], clear_all: bool) -> None:
         imported_at = datetime.now().isoformat(timespec="seconds")
         cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM patient_operational_fields")
+        if clear_all:
+            cursor.execute("DELETE FROM patient_operational_fields")
+        else:
+            patient_ids = [int(row["patient_id"]) for row in rows]
+            if patient_ids:
+                placeholders = ",".join("?" for _ in patient_ids)
+                cursor.execute(
+                    f"DELETE FROM patient_operational_fields WHERE patient_id IN ({placeholders})",
+                    patient_ids,
+                )
         for row in rows:
             payload = {**row, "imported_at": imported_at}
             payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
@@ -373,6 +452,12 @@ class PatientOperationalStore:
             )
         self.conn.commit()
 
+    def replace_all(self, rows: Sequence[Dict[str, Any]]) -> None:
+        self._write_rows(rows, clear_all=True)
+
+    def replace_subset(self, rows: Sequence[Dict[str, Any]]) -> None:
+        self._write_rows(rows, clear_all=False)
+
 
 def _build_snapshot(
     extractor: ClinicaAgilOperationalExtractor,
@@ -414,6 +499,25 @@ def _build_snapshot(
     }
 
 
+def _build_snapshot_worker(
+    patient_id: int,
+    now_iso: str,
+    email: str,
+    senha: str,
+    timeout: int,
+    cookies: Dict[str, str],
+) -> Dict[str, Any]:
+    logger = logging.getLogger("clinic_operational_fields_sync.worker")
+    extractor = ClinicaAgilOperationalExtractor.from_cookies(
+        email=email,
+        senha=senha,
+        timeout=timeout,
+        logger=logger,
+        cookies=cookies,
+    )
+    return _build_snapshot(extractor=extractor, patient_id=patient_id, now=datetime.fromisoformat(now_iso))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Extrai campos operacionais da Clinica Agil para apoiar o preenchimento do Kommo."
@@ -422,6 +526,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--senha", default=os.getenv("MIRELLA_SENHA", DEFAULT_SENHA))
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
     parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
+    parser.add_argument("--kommo-db-path", default=str(DEFAULT_KOMMO_DB_PATH))
+    parser.add_argument("--patient-scope", choices=("matched", "all"), default="matched")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     parser.add_argument("--limit", type=int)
     return parser
 
@@ -443,19 +550,60 @@ def main() -> None:
     )
     try:
         extractor.login()
-        patient_ids = store.patient_ids(limit=args.limit)
-        logger.info("Pacientes para extrair campos operacionais: %s", len(patient_ids))
+        if args.patient_scope == "matched":
+            patient_ids = store.matched_patient_ids(Path(args.kommo_db_path), limit=args.limit)
+            if not patient_ids:
+                logger.warning("Nenhum paciente relevante encontrado no Kommo local; usando todos os pacientes.")
+                patient_ids = store.patient_ids(limit=args.limit)
+        else:
+            patient_ids = store.patient_ids(limit=args.limit)
+
+        logger.info(
+            "Pacientes para extrair campos operacionais: %s | escopo=%s | workers=%s",
+            len(patient_ids),
+            args.patient_scope,
+            args.workers,
+        )
         rows: List[Dict[str, Any]] = []
         now = datetime.now()
-        for index, patient_id in enumerate(patient_ids, start=1):
-            try:
-                rows.append(_build_snapshot(extractor, patient_id, now))
-            except Exception as exc:
-                logger.warning("Falha ao extrair paciente %s: %s", patient_id, exc)
-            if index % 25 == 0 or index == len(patient_ids):
-                logger.info("Processados %s/%s pacientes", index, len(patient_ids))
+        cookies = extractor.export_cookies()
+        if args.workers <= 1:
+            for index, patient_id in enumerate(patient_ids, start=1):
+                try:
+                    rows.append(_build_snapshot(extractor, patient_id, now))
+                except Exception as exc:
+                    logger.warning("Falha ao extrair paciente %s: %s", patient_id, exc)
+                if index % 25 == 0 or index == len(patient_ids):
+                    logger.info("Processados %s/%s pacientes", index, len(patient_ids))
+        else:
+            futures: Dict[concurrent.futures.Future[Dict[str, Any]], int] = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(args.workers))) as pool:
+                for patient_id in patient_ids:
+                    future = pool.submit(
+                        _build_snapshot_worker,
+                        patient_id,
+                        now.isoformat(),
+                        args.email,
+                        args.senha,
+                        args.timeout,
+                        cookies,
+                    )
+                    futures[future] = patient_id
 
-        store.replace_all(rows)
+                for index, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+                    patient_id = futures[future]
+                    try:
+                        rows.append(future.result())
+                    except Exception as exc:
+                        logger.warning("Falha ao extrair paciente %s: %s", patient_id, exc)
+                    if index % 25 == 0 or index == len(patient_ids):
+                        logger.info("Processados %s/%s pacientes", index, len(patient_ids))
+
+        rows.sort(key=lambda item: int(item["patient_id"]))
+        if args.patient_scope == "all":
+            store.replace_all(rows)
+        else:
+            store.replace_subset(rows)
 
         summary = store.conn.execute(
             """

@@ -76,14 +76,26 @@ npm run tauri:dev
 
 A interface tem apenas duas telas de rotina:
 
-- `Atualizar`: executa a sincronizacao vigente e mostra o que esta pronto para atualizar no Kommo
-- `Revisar`: mostra somente pendencias que nao devem ser aplicadas automaticamente
+- `Rotina`: atualiza os dados e mostra o que ja esta pronto para seguir
+- `Pendencias`: mostra somente o que nao deve ser aplicado automaticamente
 
-Na tela `Atualizar`, use **Atualizar agora** para executar a sequencia vigente:
+Na tela `Rotina`, existem dois modos:
+
+- **Atualização rápida**: rotina do dia a dia
+- **Atualização completa**: reprocessa tudo desde o início
+
+**Atualização rápida** executa:
+
+1. `login.py --sem-input`
+2. `clinic_operational_fields_sync.py --patient-scope matched --workers 4`
+3. `kommo_leads_sqlite.py --sync-mode incremental`
+4. `clinic_kommo_payload_preview.py`
+
+**Atualização completa** executa:
 
 1. `login.py --sem-input --reprocessar-pacientes`
-2. `clinic_operational_fields_sync.py`
-3. `kommo_leads_sqlite.py`
+2. `clinic_operational_fields_sync.py --patient-scope all --workers 4`
+3. `kommo_leads_sqlite.py --sync-mode full`
 4. `clinic_kommo_payload_preview.py`
 
 Gerar build do app desktop:

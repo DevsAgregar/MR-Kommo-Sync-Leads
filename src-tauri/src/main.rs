@@ -127,14 +127,34 @@ fn run_secret_check() -> Result<Value, String> {
 
 fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, Vec<&'static str>)>, String> {
     let steps = match task {
+        "quick" => vec![
+            ("Atualizar Clínica", "login.py", vec!["--sem-input"]),
+            (
+                "Extrair campos operacionais",
+                "clinic_operational_fields_sync.py",
+                vec!["--patient-scope", "matched", "--workers", "4"],
+            ),
+            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "incremental"]),
+            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
+        ],
+        "full" => vec![
+            ("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
+            (
+                "Extrair campos operacionais",
+                "clinic_operational_fields_sync.py",
+                vec!["--patient-scope", "all", "--workers", "4"],
+            ),
+            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "full"]),
+            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
+        ],
         "clinic" => vec![("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"])],
-        "operational" => vec![("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec![])],
-        "kommo" => vec![("Atualizar Kommo", "kommo_leads_sqlite.py", vec![])],
+        "operational" => vec![("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec!["--patient-scope", "matched", "--workers", "4"])],
+        "kommo" => vec![("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "incremental"])],
         "preview" => vec![("Gerar prévia", "clinic_kommo_payload_preview.py", vec![])],
         "all" => vec![
             ("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
-            ("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec![]),
-            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec![]),
+            ("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec!["--patient-scope", "all", "--workers", "4"]),
+            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "full"]),
             ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
         ],
         _ => return Err(format!("Unknown sync task: {task}")),

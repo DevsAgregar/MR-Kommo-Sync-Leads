@@ -25,6 +25,8 @@ DEFAULT_DB_PATH = Path("mirella_kommo_leads.sqlite3")
 DEFAULT_OUTPUT_DIR = Path("exports") / "kommo"
 DEFAULT_STATE_PATH = Path("profiles") / "kommo_state.json"
 DEFAULT_TIMEOUT_MS = 60_000
+DEFAULT_SYNC_MODE = "full"
+DEFAULT_INCREMENTAL_LOOKBACK_SECONDS = 86_400
 
 
 class KommoAuthError(RuntimeError):
@@ -124,6 +126,19 @@ def _request_json(session: requests.Session, url: str, logger: logging.Logger, a
         body = response.text
         raise RuntimeError(f"Kommo retornou HTTP {status} para {url}: {body[:500]}")
     raise RuntimeError(f"Falha ao consultar Kommo depois de {attempts} tentativas: {url}")
+
+
+def _determine_incremental_from(db_path: Path, lookback_seconds: int) -> Optional[int]:
+    if not db_path.exists():
+        return None
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute("SELECT MAX(updated_at) FROM kommo_leads").fetchone()
+    finally:
+        conn.close()
+    if row is None or row[0] in (None, 0):
+        return None
+    return max(0, int(row[0]) - int(lookback_seconds))
 
 
 def _fill_if_visible(page: Page, selectors: Sequence[str], value: str) -> bool:
@@ -701,6 +716,7 @@ def fetch_kommo_data(
     session: requests.Session,
     base_url: str,
     pipeline_id: Optional[str],
+    updated_from: Optional[int],
     logger: logging.Logger,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     fields_url = f"{base_url}/api/v4/leads/custom_fields?limit=250"
@@ -714,6 +730,8 @@ def fetch_kommo_data(
     }
     if pipeline_id:
         query["filter[pipeline_id][]"] = pipeline_id
+    if updated_from:
+        query["filter[updated_at][from]"] = int(updated_from)
 
     leads: List[Dict[str, Any]] = []
     page = 1
@@ -752,6 +770,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--password", default=os.getenv("KOMMO_PASSWORD"))
     parser.add_argument("--access-token", default=os.getenv("KOMMO_ACCESS_TOKEN"))
     parser.add_argument("--pipeline-id", default=os.getenv("KOMMO_PIPELINE_ID"), help="Opcional. Se omitido, busca todos os pipelines.")
+    parser.add_argument("--sync-mode", choices=("full", "incremental"), default=os.getenv("KOMMO_SYNC_MODE", DEFAULT_SYNC_MODE))
+    parser.add_argument("--incremental-lookback-seconds", type=int, default=int(os.getenv("KOMMO_INCREMENTAL_LOOKBACK_SECONDS", DEFAULT_INCREMENTAL_LOOKBACK_SECONDS)))
     parser.add_argument("--db-path", default=os.getenv("KOMMO_DB_PATH", str(DEFAULT_DB_PATH)))
     parser.add_argument("--output-dir", default=os.getenv("KOMMO_OUTPUT_DIR", str(DEFAULT_OUTPUT_DIR)))
     parser.add_argument("--state-path", default=os.getenv("KOMMO_STATE_PATH", str(DEFAULT_STATE_PATH)))
@@ -772,18 +792,22 @@ def main() -> None:
     db_path = Path(args.db_path)
     output_dir = Path(args.output_dir)
     state_path = Path(args.state_path)
+    updated_from = None if args.sync_mode == "full" else _determine_incremental_from(db_path, args.incremental_lookback_seconds)
 
     logger.info("============================================================")
     logger.info("Exportacao Kommo Leads")
     logger.info("Base URL: %s", base_url)
     logger.info("Pipeline: %s", pipeline_id or "todos")
+    logger.info("Modo sync: %s", args.sync_mode)
+    if updated_from:
+        logger.info("Filtro updated_at[from]: %s", updated_from)
     logger.info("SQLite: %s", db_path)
     logger.info("Saida SQL: %s", output_dir)
     logger.info("============================================================")
 
     session = _create_http_session(base_url, state_path, args.access_token)
     try:
-        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, logger)
+        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
     except KommoAuthError:
         if args.access_token:
             raise
@@ -796,7 +820,7 @@ def main() -> None:
             logger=logger,
         )
         session = _create_http_session(base_url, state_path, args.access_token)
-        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, logger)
+        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
 
     store = KommoSQLiteStore(db_path, logger)
     try:
