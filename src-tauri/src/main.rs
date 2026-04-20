@@ -1,46 +1,70 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
-use tauri::{path::BaseDirectory, AppHandle, Manager, Runtime};
+use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Runtime};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 const RUNTIME_FILES: &[(&str, &str)] = &[
-    ("runtime/.env", ".env"),
-    ("runtime/mirella_pacientes.sqlite3", "mirella_pacientes.sqlite3"),
-    ("runtime/mirella_kommo_leads.sqlite3", "mirella_kommo_leads.sqlite3"),
-    ("runtime/mappings/clinic_kommo_origin_mapping.csv", "mappings/clinic_kommo_origin_mapping.csv"),
-    ("runtime/mappings/clinic_kommo_service_mapping.csv", "mappings/clinic_kommo_service_mapping.csv"),
-    ("runtime/profiles/kommo_state.json", "profiles/kommo_state.json"),
-    ("runtime/exports/kommo/kommo_leads_latest.sql", "exports/kommo/kommo_leads_latest.sql"),
+    ("resources/runtime/.env", ".env"),
+    ("resources/runtime/mirella_pacientes.sqlite3", "mirella_pacientes.sqlite3"),
+    ("resources/runtime/mirella_kommo_leads.sqlite3", "mirella_kommo_leads.sqlite3"),
     (
-        "runtime/exports/sync_preview/clinic_kommo_preview_summary.json",
+        "resources/runtime/mappings/clinic_kommo_origin_mapping.csv",
+        "mappings/clinic_kommo_origin_mapping.csv",
+    ),
+    (
+        "resources/runtime/mappings/clinic_kommo_service_mapping.csv",
+        "mappings/clinic_kommo_service_mapping.csv",
+    ),
+    ("resources/runtime/profiles/kommo_state.json", "profiles/kommo_state.json"),
+    (
+        "resources/runtime/exports/kommo/kommo_leads_latest.sql",
+        "exports/kommo/kommo_leads_latest.sql",
+    ),
+    (
+        "resources/runtime/exports/sync_preview/clinic_kommo_preview_summary.json",
         "exports/sync_preview/clinic_kommo_preview_summary.json",
     ),
     (
-        "runtime/exports/sync_preview/clinic_kommo_preview_summary.md",
+        "resources/runtime/exports/sync_preview/clinic_kommo_preview_summary.md",
         "exports/sync_preview/clinic_kommo_preview_summary.md",
     ),
     (
-        "runtime/exports/sync_preview/clinic_kommo_safe_payloads.json",
+        "resources/runtime/exports/sync_preview/clinic_kommo_safe_payloads.json",
         "exports/sync_preview/clinic_kommo_safe_payloads.json",
     ),
     (
-        "runtime/exports/sync_preview/clinic_kommo_safe_rows.csv",
+        "resources/runtime/exports/sync_preview/clinic_kommo_safe_rows.csv",
         "exports/sync_preview/clinic_kommo_safe_rows.csv",
     ),
     (
-        "runtime/exports/sync_preview/clinic_kommo_review_rows.csv",
+        "resources/runtime/exports/sync_preview/clinic_kommo_review_rows.csv",
         "exports/sync_preview/clinic_kommo_review_rows.csv",
     ),
     (
-        "runtime/exports/sync_preview/clinic_kommo_all_actions.csv",
+        "resources/runtime/exports/sync_preview/clinic_kommo_all_actions.csv",
         "exports/sync_preview/clinic_kommo_all_actions.csv",
     ),
 ];
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[derive(Clone, Serialize)]
+struct ProgressPayload {
+    flow: String,
+    task: String,
+    step: String,
+    status: String,
+    message: String,
+}
 
 fn dev_repo_root() -> Result<PathBuf, String> {
     let current = std::env::current_dir().map_err(|error| error.to_string())?;
@@ -136,9 +160,32 @@ fn file_meta(path: &Path) -> Value {
 fn sidecar_path<R: Runtime>(handle: &AppHandle<R>, executable_name: &str) -> Result<PathBuf, String> {
     let resource = handle
         .path()
-        .resolve(format!("backend/{executable_name}.exe"), BaseDirectory::Resource)
+        .resolve(
+            format!("resources/backend/{executable_name}.exe"),
+            BaseDirectory::Resource,
+        )
         .map_err(|error| error.to_string())?;
     Ok(resource)
+}
+
+fn emit_progress<R: Runtime>(
+    handle: &AppHandle<R>,
+    flow: &str,
+    task: &str,
+    step: &str,
+    status: &str,
+    message: &str,
+) {
+    let _ = handle.emit(
+        "process-progress",
+        ProgressPayload {
+            flow: flow.to_string(),
+            task: task.to_string(),
+            step: step.to_string(),
+            status: status.to_string(),
+            message: message.to_string(),
+        },
+    );
 }
 
 fn run_backend_command<R: Runtime>(
@@ -148,18 +195,30 @@ fn run_backend_command<R: Runtime>(
     args: &[&str],
 ) -> Result<String, String> {
     let runtime_dir = ensure_runtime_seeded(handle)?;
+    if !runtime_dir.exists() {
+        return Err(format!(
+            "Diretorio de runtime nao encontrado: {}",
+            runtime_dir.display()
+        ));
+    }
     let mut command = if is_dev_mode() {
         let mut cmd = Command::new("py");
         cmd.arg("-3").arg(script_name);
         cmd
     } else {
-        Command::new(sidecar_path(handle, executable_name)?)
+        let sidecar = sidecar_path(handle, executable_name)?;
+        if !sidecar.exists() {
+            return Err(format!("Backend nao encontrado: {}", sidecar.display()));
+        }
+        Command::new(sidecar)
     };
 
     command
         .args(args)
         .current_dir(&runtime_dir)
         .env("MIRELLA_RUNTIME_ROOT", &runtime_dir);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(CREATE_NO_WINDOW);
 
     let output = command.output().map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -211,12 +270,46 @@ fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, Str
 }
 
 #[tauri::command]
-fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
-    let stdout = run_backend_command(&handle, "clinic_kommo_payload_preview", "clinic_kommo_payload_preview.py", &[])?;
-    Ok(json!({
-        "stdout": stdout,
-        "snapshot": get_dashboard_snapshot(handle)?
-    }))
+async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let worker_handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        emit_progress(
+            &worker_handle,
+            "sync",
+            "preview",
+            "Gerar prévia",
+            "started",
+            "Gerando prévia atualizada...",
+        );
+        let stdout = run_backend_command(
+            &worker_handle,
+            "clinic_kommo_payload_preview",
+            "clinic_kommo_payload_preview.py",
+            &[],
+        )?;
+        emit_progress(
+            &worker_handle,
+            "sync",
+            "preview",
+            "Gerar prévia",
+            "completed",
+            "Prévia gerada com sucesso.",
+        );
+        emit_progress(
+            &worker_handle,
+            "sync",
+            "preview",
+            "Gerar prévia",
+            "done",
+            "Prévia concluída.",
+        );
+        Ok(json!({
+            "stdout": stdout,
+            "snapshot": get_dashboard_snapshot(worker_handle)?
+        }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -284,21 +377,44 @@ fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, &'static st
 }
 
 #[tauri::command]
-fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result<Value, String> {
-    let mut logs: Vec<Value> = Vec::new();
-    for (label, executable_name, script_name, args) in sync_steps(&task)? {
-        let stdout = run_backend_command(&handle, executable_name, script_name, &args)?;
-        logs.push(json!({
-            "label": label,
-            "script": script_name,
-            "stdout": stdout
-        }));
-    }
-    Ok(json!({
-        "task": task,
-        "logs": logs,
-        "snapshot": get_dashboard_snapshot(handle)?
-    }))
+async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result<Value, String> {
+    let worker_handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut logs: Vec<Value> = Vec::new();
+        let steps = sync_steps(&task)?;
+        for (label, executable_name, script_name, args) in steps {
+            emit_progress(&worker_handle, "sync", &task, label, "started", &format!("{label}..."));
+            match run_backend_command(&worker_handle, executable_name, script_name, &args) {
+                Ok(stdout) => {
+                    logs.push(json!({
+                        "label": label,
+                        "script": script_name,
+                        "stdout": stdout
+                    }));
+                    emit_progress(&worker_handle, "sync", &task, label, "completed", &format!("{label} concluído."));
+                }
+                Err(error) => {
+                    emit_progress(&worker_handle, "sync", &task, label, "failed", &error);
+                    return Err(error);
+                }
+            }
+        }
+        emit_progress(
+            &worker_handle,
+            "sync",
+            &task,
+            "Fluxo finalizado",
+            "done",
+            "Atualização finalizada com sucesso.",
+        );
+        Ok(json!({
+            "task": task,
+            "logs": logs,
+            "snapshot": get_dashboard_snapshot(worker_handle)?
+        }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -324,33 +440,58 @@ fn read_review_rows<R: Runtime>(handle: AppHandle<R>) -> Result<String, String> 
 }
 
 #[tauri::command]
-fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
-    let apply_stdout = run_backend_command(
-        &handle,
-        "apply_kommo_safe_payloads",
-        "apply_kommo_safe_payloads.py",
-        &["--apply"],
-    )?;
-    let sync_stdout = run_backend_command(
-        &handle,
-        "kommo_leads_sqlite",
-        "kommo_leads_sqlite.py",
-        &["--sync-mode", "incremental"],
-    )?;
-    let preview_stdout = run_backend_command(
-        &handle,
-        "clinic_kommo_payload_preview",
-        "clinic_kommo_payload_preview.py",
-        &[],
-    )?;
-    Ok(json!({
-        "logs": [
-            { "label": "Aplicar no Kommo", "stdout": apply_stdout },
-            { "label": "Atualizar espelho Kommo", "stdout": sync_stdout },
-            { "label": "Gerar nova prévia", "stdout": preview_stdout }
-        ],
-        "snapshot": get_dashboard_snapshot(handle)?
-    }))
+async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let worker_handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let steps = [
+            (
+                "Aplicar no Kommo",
+                "apply_kommo_safe_payloads",
+                "apply_kommo_safe_payloads.py",
+                vec!["--apply"],
+            ),
+            (
+                "Atualizar espelho Kommo",
+                "kommo_leads_sqlite",
+                "kommo_leads_sqlite.py",
+                vec!["--sync-mode", "incremental"],
+            ),
+            (
+                "Gerar nova prévia",
+                "clinic_kommo_payload_preview",
+                "clinic_kommo_payload_preview.py",
+                vec![],
+            ),
+        ];
+        let mut logs: Vec<Value> = Vec::new();
+        for (label, executable_name, script_name, args) in steps {
+            emit_progress(&worker_handle, "apply", "apply", label, "started", &format!("{label}..."));
+            match run_backend_command(&worker_handle, executable_name, script_name, &args) {
+                Ok(stdout) => {
+                    logs.push(json!({ "label": label, "stdout": stdout }));
+                    emit_progress(&worker_handle, "apply", "apply", label, "completed", &format!("{label} concluído."));
+                }
+                Err(error) => {
+                    emit_progress(&worker_handle, "apply", "apply", label, "failed", &error);
+                    return Err(error);
+                }
+            }
+        }
+        emit_progress(
+            &worker_handle,
+            "apply",
+            "apply",
+            "Fluxo finalizado",
+            "done",
+            "Aplicação concluída com sucesso.",
+        );
+        Ok(json!({
+            "logs": logs,
+            "snapshot": get_dashboard_snapshot(worker_handle)?
+        }))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn main() {

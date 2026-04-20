@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -64,6 +65,21 @@ type ReviewRow = {
 
 type Page = "sync" | "review";
 type SyncTask = "clinic" | "operational" | "kommo" | "preview" | "all" | "quick" | "full";
+type StepStatus = "idle" | "running" | "done" | "error";
+
+type ProgressEvent = {
+  flow: "sync" | "apply";
+  task: string;
+  step: string;
+  status: "started" | "completed" | "failed" | "done";
+  message: string;
+};
+
+type StepState = {
+  label: string;
+  status: StepStatus;
+  message?: string;
+};
 
 const fallbackSnapshot: Snapshot = {
   previewSummary: {
@@ -117,6 +133,17 @@ const friendlyFields = [
   ["origin", "Origem", "canal de chegada"],
   ["service", "Serviço", "serviços identificados"]
 ] as const;
+
+const taskSteps: Record<SyncTask | "apply", string[]> = {
+  quick: ["Atualizar Clínica", "Extrair campos operacionais", "Atualizar Kommo", "Gerar prévia"],
+  full: ["Atualizar Clínica", "Extrair campos operacionais", "Atualizar Kommo", "Gerar prévia"],
+  clinic: ["Atualizar Clínica"],
+  operational: ["Extrair campos operacionais"],
+  kommo: ["Atualizar Kommo"],
+  preview: ["Gerar prévia"],
+  all: ["Atualizar Clínica", "Extrair campos operacionais", "Atualizar Kommo", "Gerar prévia"],
+  apply: ["Aplicar no Kommo", "Atualizar espelho Kommo", "Gerar nova prévia"]
+};
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   return invoke<T>(command, args);
@@ -262,6 +289,50 @@ function BigNumber({ label, value, help, tone }: { label: string; value: number;
   );
 }
 
+function ProcessTracker({
+  title,
+  steps,
+  running
+}: {
+  title: string;
+  steps: StepState[];
+  running: boolean;
+}) {
+  if (!steps.length) return null;
+  return (
+    <section className="rounded-2xl border border-white/10 bg-white/[0.03] p-6">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <p className="mt-1 text-sm text-slate-400">
+            {running ? "Processando etapas em segundo plano." : "Último andamento do processo."}
+          </p>
+        </div>
+        {running ? <Loader2 className="h-5 w-5 animate-spin text-emerald-300" /> : null}
+      </div>
+      <div className="mt-5 space-y-3">
+        {steps.map((step) => (
+          <div key={step.label} className="rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-medium text-white">{step.label}</span>
+              {step.status === "running" ? (
+                <Loader2 className="h-4 w-4 animate-spin text-cyan-300" />
+              ) : step.status === "done" ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+              ) : step.status === "error" ? (
+                <XCircle className="h-4 w-4 text-rose-300" />
+              ) : (
+                <Clock3 className="h-4 w-4 text-slate-500" />
+              )}
+            </div>
+            <p className="mt-2 text-sm text-slate-400">{step.message ?? "Aguardando."}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function DataFreshness({ snapshot }: { snapshot: Snapshot }) {
   const files = [
     ["Clínica", snapshot.localFiles?.patientDb],
@@ -289,6 +360,8 @@ function SyncPage({
   desktop,
   command,
   applyCommand,
+  syncSteps,
+  applySteps,
   onQuickUpdate,
   onFullUpdate,
   onApply
@@ -297,6 +370,8 @@ function SyncPage({
   desktop: boolean;
   command: CommandState;
   applyCommand: CommandState;
+  syncSteps: StepState[];
+  applySteps: StepState[];
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
   onApply: () => void;
@@ -417,6 +492,8 @@ function SyncPage({
         </div>
       </Card>
 
+      <ProcessTracker title="Andamento da atualização" steps={syncSteps} running={command.running} />
+
       <Card className="p-6">
         <div className="flex items-start justify-between gap-6">
           <div>
@@ -440,6 +517,9 @@ function SyncPage({
             {applyCommand.message}
           </div>
         ) : null}
+        <div className="mt-5">
+          <ProcessTracker title="Andamento da aplicação" steps={applySteps} running={applyCommand.running} />
+        </div>
       </Card>
     </main>
   );
@@ -555,6 +635,43 @@ export default function App() {
   const [page, setPage] = useState<Page>("sync");
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
+  const [syncSteps, setSyncSteps] = useState<StepState[]>([]);
+  const [applySteps, setApplySteps] = useState<StepState[]>([]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<ProgressEvent>("process-progress", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      const setSteps = payload.flow === "apply" ? setApplySteps : setSyncSteps;
+      setSteps((current) => {
+        const next = [...current];
+        const index = next.findIndex((item) => item.label === payload.step);
+        const status: StepStatus =
+          payload.status === "started"
+            ? "running"
+            : payload.status === "completed" || payload.status === "done"
+              ? "done"
+              : "error";
+        if (index >= 0) {
+          next[index] = { ...next[index], status, message: payload.message };
+          return next;
+        }
+        return [...next, { label: payload.step, status, message: payload.message }];
+      });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  function createStepState(task: SyncTask | "apply") {
+    return taskSteps[task].map((label) => ({ label, status: "idle" as StepStatus, message: "Aguardando." }));
+  }
 
   async function runSyncTask(task: SyncTask) {
     const labels: Record<SyncTask, string> = {
@@ -566,6 +683,7 @@ export default function App() {
       preview: "Gerando nova prévia...",
       all: "Atualizando tudo. Isso pode levar alguns minutos."
     };
+    setSyncSteps(createStepState(task));
     setCommand({ running: true, message: labels[task], ok: null, task });
     try {
       const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("run_sync_task", { task });
@@ -585,6 +703,7 @@ export default function App() {
     if (!confirmed) {
       return;
     }
+    setApplySteps(createStepState("apply"));
     setApplyCommand({ running: true, message: "Enviando atualizações seguras para o Kommo...", ok: null });
     try {
       const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("apply_safe_payloads");
@@ -645,6 +764,8 @@ export default function App() {
               desktop={desktop}
               command={command}
               applyCommand={applyCommand}
+              syncSteps={syncSteps}
+              applySteps={applySteps}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
               onApply={applySafePayloads}
