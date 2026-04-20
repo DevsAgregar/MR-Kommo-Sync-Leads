@@ -1,0 +1,36 @@
+# Ambiente
+.env
+.venv/
+venv/
+
+# Runtime e sessao local
+profiles/
+asaas_profile_dir.txt
+asaas_profile_runtime.json
+sessao_asaas.json
+
+# Exports e dados locais
+exports/
+output/
+pacientes_list*.xlsx
+relatorio_vendas*.xlsx
+*.sqlite3
+*.zip
+*.mp4
+*.mov
+*.webm
+*.wav
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Ferramentas locais e arquivos derivados de regras
+.claude/
+.agents/
+CLAUDE.md
+.cursorrules
+.windsurfrules
