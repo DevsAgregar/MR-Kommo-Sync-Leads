@@ -64,6 +64,7 @@ fn get_dashboard_snapshot() -> Result<Value, String> {
     let safe_payloads_path = preview_dir.join("clinic_kommo_safe_payloads.json");
     let safe_rows_path = preview_dir.join("clinic_kommo_safe_rows.csv");
     let review_rows_path = preview_dir.join("clinic_kommo_review_rows.csv");
+    let all_actions_path = preview_dir.join("clinic_kommo_all_actions.csv");
 
     let preview_summary = read_json_if_exists(&summary_path);
     let safe_payload_count = read_json_if_exists(&safe_payloads_path)
@@ -86,7 +87,8 @@ fn get_dashboard_snapshot() -> Result<Value, String> {
             "patientDb": file_meta(&root.join("mirella_pacientes.sqlite3")),
             "kommoDb": file_meta(&root.join("mirella_kommo_leads.sqlite3")),
             "safePayloads": file_meta(&safe_payloads_path),
-            "reviewRows": file_meta(&review_rows_path)
+            "reviewRows": file_meta(&review_rows_path),
+            "allActions": file_meta(&all_actions_path)
         }
     });
 
@@ -191,6 +193,32 @@ fn read_mapping(kind: String) -> Result<String, String> {
     fs::read_to_string(root.join("mappings").join(file_name)).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+fn read_review_rows() -> Result<String, String> {
+    let root = repo_root()?;
+    fs::read_to_string(
+        root.join("exports")
+            .join("sync_preview")
+            .join("clinic_kommo_review_rows.csv"),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn apply_safe_payloads() -> Result<Value, String> {
+    let apply_stdout = run_python_command("apply_kommo_safe_payloads.py", &["--apply"])?;
+    let sync_stdout = run_python_command("kommo_leads_sqlite.py", &["--sync-mode", "incremental"])?;
+    let preview_stdout = run_python_command("clinic_kommo_payload_preview.py", &[])?;
+    Ok(json!({
+        "logs": [
+            { "label": "Aplicar no Kommo", "stdout": apply_stdout },
+            { "label": "Atualizar espelho Kommo", "stdout": sync_stdout },
+            { "label": "Gerar nova prévia", "stdout": preview_stdout }
+        ],
+        "snapshot": get_dashboard_snapshot()?
+    }))
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -198,7 +226,9 @@ fn main() {
             run_preview,
             run_secret_check,
             run_sync_task,
-            read_mapping
+            read_mapping,
+            read_review_rows,
+            apply_safe_payloads
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

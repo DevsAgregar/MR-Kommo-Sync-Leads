@@ -8,6 +8,7 @@ import {
   Loader2,
   RefreshCw,
   Sparkles,
+  Send,
   WalletCards,
   XCircle
 } from "lucide-react";
@@ -49,6 +50,16 @@ type CommandState = {
   message: string;
   ok: boolean | null;
   task?: string;
+};
+
+type ReviewRow = {
+  patient_name: string;
+  lead_name: string;
+  field_label: string;
+  candidate_value: string;
+  mapped_value: string;
+  confidence: string;
+  rule: string;
 };
 
 type Page = "sync" | "review";
@@ -99,6 +110,7 @@ const friendlyFields = [
   ["sale_value", "Venda", "último valor gasto"],
   ["billed_total", "Faturado", "total gasto pelo cliente"],
   ["visits", "Visitas", "quantidade de compras/visitas"],
+  ["birthday_month", "Aniversariantes do Mês", "mês do aniversário por extenso"],
   ["last_visit", "Última visita", "último atendimento válido"],
   ["appointment", "Agendamento", "próximo agendamento"],
   ["next_consultation", "Próxima consulta", "próximo contato"],
@@ -148,6 +160,78 @@ function useSnapshot() {
   }, []);
 
   return { snapshot, desktop, refresh };
+}
+
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+    if (char === '"' && quoted && next === '"') {
+      cell += '"';
+      index += 1;
+      continue;
+    }
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (char === "," && !quoted) {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if ((char === "\n" || char === "\r") && !quoted) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(cell);
+      if (row.some((value) => value.trim())) {
+        rows.push(row);
+      }
+      row = [];
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  row.push(cell);
+  if (row.some((value) => value.trim())) {
+    rows.push(row);
+  }
+  return rows;
+}
+
+function useReviewRows() {
+  const [rows, setRows] = useState<ReviewRow[]>([]);
+
+  async function refresh() {
+    try {
+      const csv = await call<string>("read_review_rows");
+      const parsed = parseCsv(csv);
+      const [headers, ...data] = parsed;
+      const mapped = data.map((cells) => {
+        const item: Record<string, string> = {};
+        headers.forEach((header, index) => {
+          item[header] = cells[index] ?? "";
+        });
+        return item as unknown as ReviewRow;
+      });
+      setRows(mapped);
+    } catch {
+      setRows([]);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  return { rows, refresh };
 }
 
 function Card({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -204,14 +288,18 @@ function SyncPage({
   snapshot,
   desktop,
   command,
+  applyCommand,
   onQuickUpdate,
-  onFullUpdate
+  onFullUpdate,
+  onApply
 }: {
   snapshot: Snapshot;
   desktop: boolean;
   command: CommandState;
+  applyCommand: CommandState;
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
+  onApply: () => void;
 }) {
   const summary = snapshot.previewSummary;
   const actions = summary?.action_counts ?? {};
@@ -328,11 +416,36 @@ function SyncPage({
           </div>
         </div>
       </Card>
+
+      <Card className="p-6">
+        <div className="flex items-start justify-between gap-6">
+          <div>
+            <Pill tone="warn">etapa separada</Pill>
+            <h3 className="mt-4 text-2xl font-semibold text-white">Aplicar no Kommo</h3>
+            <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+              Esta ação envia somente as atualizações seguras para o Kommo. Pendências da aba ao lado não são enviadas.
+            </p>
+          </div>
+          <button
+            className="inline-flex h-13 shrink-0 items-center gap-3 rounded-2xl bg-white px-5 py-4 text-sm font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+            onClick={onApply}
+            disabled={applyCommand.running || command.running}
+          >
+            {applyCommand.running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            Aplicar atualizações seguras
+          </button>
+        </div>
+        {applyCommand.message ? (
+          <div className={cx("mt-5 rounded-2xl border px-4 py-3 text-sm", applyCommand.ok === false ? "border-rose-400/30 bg-rose-400/10 text-rose-100" : "border-emerald-400/30 bg-emerald-400/10 text-emerald-100")}>
+            {applyCommand.message}
+          </div>
+        ) : null}
+      </Card>
     </main>
   );
 }
 
-function ReviewPage({ snapshot }: { snapshot: Snapshot }) {
+function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] }) {
   const stats = snapshot.previewSummary?.field_stats ?? {};
   const service = stats.service;
   const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
@@ -357,19 +470,47 @@ function ReviewPage({ snapshot }: { snapshot: Snapshot }) {
 
       <section className="grid grid-cols-[1fr_360px] gap-6">
         <Card className="p-6">
-          <h3 className="text-xl font-semibold text-white">Serviços que ainda precisam regra</h3>
-          <div className="mt-5 grid grid-cols-2 gap-3">
-            {["Avaliação Facial", "Avaliação Corporal", "Exossomos", "Manthus", "Furo em Orelha", "Vitamina D"].map((item) => (
-              <div key={item} className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
-                <span className="text-sm font-medium text-slate-200">{item}</span>
-                <Pill tone="warn">decidir</Pill>
-              </div>
-            ))}
+          <h3 className="text-xl font-semibold text-white">Itens para revisar</h3>
+          <div className="thin-scrollbar mt-5 max-h-[560px] overflow-auto rounded-2xl border border-white/10">
+            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+              <thead className="bg-white/[0.06] text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Cliente</th>
+                  <th className="px-4 py-3">Campo</th>
+                  <th className="px-4 py-3">Valor da clínica</th>
+                  <th className="px-4 py-3">Sugestão</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {rows.slice(0, 80).map((row, index) => (
+                  <tr key={`${row.patient_name}-${row.field_label}-${index}`} className="bg-white/[0.025]">
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-white">{row.patient_name || row.lead_name}</p>
+                      <p className="mt-1 text-xs text-slate-500">{row.lead_name}</p>
+                    </td>
+                    <td className="px-4 py-3 text-slate-200">{row.field_label}</td>
+                    <td className="max-w-[260px] px-4 py-3 text-slate-300">
+                      <span className="line-clamp-2">{row.candidate_value}</span>
+                    </td>
+                    <td className="max-w-[220px] px-4 py-3 text-slate-300">
+                      {row.mapped_value ? <span className="line-clamp-2">{row.mapped_value}</span> : <Pill tone="warn">sem regra</Pill>}
+                    </td>
+                  </tr>
+                ))}
+                {!rows.length ? (
+                  <tr>
+                    <td className="px-4 py-8 text-center text-slate-400" colSpan={4}>
+                      Nenhuma pendência carregada.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
 
           <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
             <p className="text-sm leading-6 text-slate-300">
-              O campo <strong className="text-white">Serviço</strong> é o principal motivo de revisão. Quando não existe uma equivalência clara no Kommo, o item fica parado aqui.
+              Para resolver uma pendência, ajuste o mapeamento do serviço ou deixe o item fora da automação. Nada nesta tela é aplicado automaticamente.
             </p>
           </div>
         </Card>
@@ -410,8 +551,10 @@ function ReviewPage({ snapshot }: { snapshot: Snapshot }) {
 
 export default function App() {
   const { snapshot, desktop, refresh } = useSnapshot();
+  const review = useReviewRows();
   const [page, setPage] = useState<Page>("sync");
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
+  const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
 
   async function runSyncTask(task: SyncTask) {
     const labels: Record<SyncTask, string> = {
@@ -429,8 +572,28 @@ export default function App() {
       const done = result.logs.map((item) => item.label).join(" → ");
       setCommand({ running: false, message: `Concluído: ${done}`, ok: true, task });
       await refresh();
+      await review.refresh();
     } catch (error) {
       setCommand({ running: false, message: String(error), ok: false, task });
+    }
+  }
+
+  async function applySafePayloads() {
+    const confirmed = window.confirm(
+      "Aplicar no Kommo somente as atualizações seguras? As pendências não serão enviadas."
+    );
+    if (!confirmed) {
+      return;
+    }
+    setApplyCommand({ running: true, message: "Enviando atualizações seguras para o Kommo...", ok: null });
+    try {
+      const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("apply_safe_payloads");
+      const done = result.logs.map((item) => item.label).join(" → ");
+      setApplyCommand({ running: false, message: `Concluído: ${done}`, ok: true });
+      await refresh();
+      await review.refresh();
+    } catch (error) {
+      setApplyCommand({ running: false, message: String(error), ok: false });
     }
   }
 
@@ -481,11 +644,13 @@ export default function App() {
               snapshot={snapshot}
               desktop={desktop}
               command={command}
+              applyCommand={applyCommand}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
+              onApply={applySafePayloads}
             />
           ) : (
-            <ReviewPage snapshot={snapshot} />
+            <ReviewPage snapshot={snapshot} rows={review.rows} />
           )}
         </div>
       </div>

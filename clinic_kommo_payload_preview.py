@@ -40,6 +40,7 @@ class FieldSpec:
 FIELD_SPECS: Sequence[FieldSpec] = (
     FieldSpec(None, "sale_value", "Venda", "numeric", "lead_price"),
     FieldSpec(1561315, "birthday", "Data de aniversário", "date"),
+    FieldSpec(1559593, "birthday_month", "Aniversariantes do Mês", "text"),
     FieldSpec(1561939, "age_bucket", "Faixa Etária", "text"),
     FieldSpec(1559591, "status", "Status do Cliente", "text"),
     FieldSpec(1561947, "billed_total", "Faturado", "numeric"),
@@ -258,6 +259,28 @@ def _age_bucket(age: Optional[int]) -> Optional[str]:
     return "65+"
 
 
+def _birthday_month_name(birth_iso: Optional[str]) -> Optional[str]:
+    normalized = _normalize_date(birth_iso)
+    if not normalized:
+        return None
+    month = int(normalized[5:7])
+    names = {
+        1: "Janeiro",
+        2: "Fevereiro",
+        3: "Março",
+        4: "Abril",
+        5: "Maio",
+        6: "Junho",
+        7: "Julho",
+        8: "Agosto",
+        9: "Setembro",
+        10: "Outubro",
+        11: "Novembro",
+        12: "Dezembro",
+    }
+    return names.get(month)
+
+
 def _load_patients(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = conn.execute(
         """
@@ -407,6 +430,12 @@ def _build_patient_candidate_values(
             "candidate_value": patient.get("data_nascimento"),
             "confidence": "high",
             "rule": "direct_patient_birthdate",
+        },
+        1559593: {
+            "kind": "text",
+            "candidate_value": _birthday_month_name(patient.get("data_nascimento")),
+            "confidence": "high",
+            "rule": "derived_birthday_month_name",
         },
         1561939: {
             "kind": "text",
