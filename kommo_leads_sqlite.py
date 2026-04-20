@@ -254,7 +254,14 @@ def _refresh_session_with_browser(
 ) -> None:
     logger.info("Sessao HTTP sem autorizacao; renovando cookie pelo navegador.")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=not headed)
+        try:
+            browser = playwright.chromium.launch(channel="msedge", headless=not headed)
+        except Exception as exc:
+            logger.warning(
+                "Falha ao iniciar Microsoft Edge do sistema; tentando Chromium padrao. Detalhe: %s",
+                exc,
+            )
+            browser = playwright.chromium.launch(headless=not headed)
         context = _create_browser_context(browser, state_path)
         page = context.new_page()
         try:
