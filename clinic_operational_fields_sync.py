@@ -15,8 +15,9 @@ from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from env_config import load_env_file
 
-from login import BASE_URL, DEFAULT_DB_PATH, DEFAULT_EMAIL, DEFAULT_ENV_FILE, DEFAULT_SENHA, _load_env_file
+from login import BASE_URL, DEFAULT_DB_PATH, DEFAULT_EMAIL, DEFAULT_ENV_FILE, DEFAULT_SENHA
 
 
 DEFAULT_TIMEOUT = 60
@@ -426,7 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    _load_env_file(DEFAULT_ENV_FILE)
+    load_env_file(DEFAULT_ENV_FILE)
     parser = build_parser()
     args = parser.parse_args()
 

@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import csv
 import re
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+
+MAPPINGS_DIR = Path(__file__).resolve().parent / "mappings"
+ORIGIN_MAPPING_CSV = MAPPINGS_DIR / "clinic_kommo_origin_mapping.csv"
+SERVICE_MAPPING_CSV = MAPPINGS_DIR / "clinic_kommo_service_mapping.csv"
 
 
 def normalize_token(value: object) -> Optional[str]:
@@ -31,87 +39,37 @@ class MultiMappingItem:
     rule: str
 
 
-ORIGIN_DIRECT_RULES: Dict[str, Tuple[str, str, str]] = {
-    "anuncio": ("Anúncio Meta", "high", "direct_exact"),
-    "facebook": ("Anúncio Meta", "medium", "channel_family"),
-    "instagran": ("Instagram", "high", "direct_exact_typo"),
-    "instagram": ("Instagram", "high", "direct_exact"),
-    "site": ("Site", "high", "direct_exact"),
-    "google": ("Site", "medium", "search_to_site"),
-    "internet": ("Site", "medium", "generic_web"),
-    "passou em frente": ("Agendamento Espontâneo", "high", "walk_in"),
-    "amigo": ("Indicação", "high", "referral"),
-    "atraves de outro paciente": ("Indicação", "high", "referral"),
-    "parente": ("Indicação", "high", "referral"),
-    "funcionaria": ("Indicação", "medium", "internal_referral"),
-    "funcionaria": ("Indicação", "medium", "internal_referral"),
-    "funcionaria": ("Indicação", "medium", "internal_referral"),
-    "funcionaria": ("Indicação", "medium", "internal_referral"),
-    "dra mirella": ("Parceria", "medium", "professional_referral"),
-    "dra eloisa": ("Parceria", "medium", "professional_referral"),
-    "dra diandra": ("Parceria", "medium", "professional_referral"),
-    "daniela barbosa": ("Parceria", "medium", "professional_referral"),
-    "bruna costa": ("Parceria", "medium", "professional_referral"),
-    "raquel rocha": ("Parceria", "medium", "professional_referral"),
-    "renan simoes": ("Indicação", "medium", "named_referral"),
-    "medico": ("Parceria", "high", "medical_partner"),
-    "atraves de outra clinica": ("Parceria", "high", "clinic_partner"),
-    "salao absolut": ("Parceria", "high", "business_partner"),
-    "dr luis neto cirurgiao plastico": ("Parceria", "high", "medical_partner"),
-    "colegio ipe indicacao da dra mirella": ("Parceria", "medium", "partner_network"),
-    "monyke secretaria dr waldivino guimaraes": ("Parceria", "high", "medical_partner"),
-}
+def _load_mapping_rows(path: Path) -> List[Dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as file:
+        return list(csv.DictReader(file))
 
 
-SERVICE_ALIAS_RULES: Sequence[Tuple[str, str, str, str]] = (
-    ("botox", "Botox", "high", "substring"),
-    ("microagulhamento", "Microagulhamento", "high", "substring"),
-    ("skinbooster", "Skinbooster", "high", "substring"),
-    ("lavieen", "Lavieen", "high", "substring"),
-    ("criolipolise", "Criolipólise", "high", "substring"),
-    ("criofrequencia", "Criofrequência", "high", "substring"),
-    ("enzima", "Enzimas", "medium", "family"),
-    ("luz pulsada", "Luz Pulsada", "high", "substring"),
-    ("microfocado full face", "Ultrassom Microfocado Full Face", "high", "substring"),
-    ("microfocado papada", "Ultrassom Microfocado Papada", "high", "substring"),
-    ("microfocado pescoco", "Ultrassom Microfocado Pescoço", "high", "substring"),
-    ("microfocado pescoço", "Ultrassom Microfocado Pescoço", "high", "substring"),
-    ("microfocado olhos", "Ultrassom Microfocado Olhos", "high", "substring"),
-    ("area dos olhos", "Ultrassom Microfocado Olhos", "medium", "semantic"),
-    ("microfocado abdomen", "Ultrassom Microfocado Abdômen", "high", "substring"),
-    ("microfocado abdômen", "Ultrassom Microfocado Abdômen", "high", "substring"),
-    ("microfocado contorno", "Ultrassom Contorno", "medium", "semantic"),
-    ("ultrassom contorno", "Ultrassom Contorno", "high", "substring"),
-    ("peeling", "Peeling", "high", "substring"),
-    ("pdrn", "PDRN", "high", "substring"),
-    ("ozonioterapia", "Ozonioterapia", "high", "substring"),
-    ("jato de plasma", "Jato de Plasma", "high", "substring"),
-    ("soroterapia", "Soroterapia", "high", "substring"),
-    ("radiofrequencia", "Radiofrequência", "high", "substring"),
-    ("radiofrequência", "Radiofrequência", "high", "substring"),
-    ("fios pdo", "Fios de PDO", "high", "substring"),
-    ("bioestimulador", "Bioestimulador de Colágeno", "high", "family"),
-    ("acido hialuronico", "Ácido Hialurônico", "high", "substring"),
-    ("acido hialurônico", "Ácido Hialurônico", "high", "substring"),
-    ("preenchimento labial", "Ácido Hialurônico", "medium", "treatment_family"),
-    ("preenchimento facial", "Ácido Hialurônico", "medium", "treatment_family"),
-    ("preenchimento olheira", "Ácido Hialurônico", "medium", "treatment_family"),
-    ("pontilhismo facial", "Pontilhismo Facial AH", "high", "substring"),
-    ("rinomodelacao", "Rinomodelação", "high", "substring"),
-    ("rinomodelação", "Rinomodelação", "high", "substring"),
-    ("co2 glow up", "CO2 Glow-Up", "high", "substring"),
-    ("co2 full face", "CO2 Resurfacing", "medium", "co2_family"),
-    ("co2 colo", "CO2 Resurfacing", "medium", "co2_family"),
-    ("co2 pescoco", "CO2 Resurfacing", "medium", "co2_family"),
-    ("co2 pescoço", "CO2 Resurfacing", "medium", "co2_family"),
-    ("glowing complexion plus", "Glowing Complexion Plus", "high", "substring"),
-    ("glowing complexion", "Glowing Complexion Bioregenere Plus", "medium", "family"),
-    ("massagem facial relaxante", "Massagem S.O.S Relaxante", "medium", "family"),
-    ("drenagem local", "Drenagem Linfática", "medium", "family"),
-    ("drenagem linfatica", "Drenagem Linfática", "high", "substring"),
-    ("drenagem linfática", "Drenagem Linfática", "high", "substring"),
-    ("tratamento capilar", "Protocolo Capilar", "high", "semantic"),
-)
+@lru_cache(maxsize=1)
+def origin_mapping_table() -> Dict[str, Tuple[str, str, str]]:
+    table: Dict[str, Tuple[str, str, str]] = {}
+    for row in _load_mapping_rows(ORIGIN_MAPPING_CSV):
+        raw_value = normalize_token(row.get("raw_value"))
+        mapped_value = row.get("mapped_value") or None
+        confidence = row.get("confidence") or "none"
+        rule = row.get("rule") or "table"
+        if raw_value:
+            table[raw_value] = (mapped_value or "", confidence, rule)
+    return table
+
+
+@lru_cache(maxsize=1)
+def service_mapping_table() -> List[Tuple[str, str, str, str]]:
+    rules: List[Tuple[str, str, str, str]] = []
+    for row in _load_mapping_rows(SERVICE_MAPPING_CSV):
+        raw_value = normalize_token(row.get("raw_value"))
+        mapped_value = row.get("mapped_value") or None
+        confidence = row.get("confidence") or "none"
+        rule = row.get("rule") or "table"
+        if raw_value and mapped_value:
+            rules.append((raw_value, mapped_value, confidence, rule))
+    return rules
 
 
 def map_origin(raw_value: Optional[str]) -> ScalarMapping:
@@ -120,9 +78,15 @@ def map_origin(raw_value: Optional[str]) -> ScalarMapping:
     if not normalized:
         return ScalarMapping(raw_value=cleaned, mapped_value=None, confidence="none", rule="empty")
 
-    if normalized in ORIGIN_DIRECT_RULES:
-        mapped_value, confidence, rule = ORIGIN_DIRECT_RULES[normalized]
-        return ScalarMapping(raw_value=cleaned, mapped_value=mapped_value, confidence=confidence, rule=rule)
+    origin_rules = origin_mapping_table()
+    if normalized in origin_rules:
+        mapped_value, confidence, rule = origin_rules[normalized]
+        return ScalarMapping(
+            raw_value=cleaned,
+            mapped_value=mapped_value or None,
+            confidence=confidence,
+            rule=rule,
+        )
 
     if normalized.startswith("dra ") or normalized.startswith("dr "):
         return ScalarMapping(raw_value=cleaned, mapped_value="Parceria", confidence="medium", rule="doctor_prefix")
@@ -163,7 +127,7 @@ def map_service_item(
             rule=direct.rule,
         )
 
-    for alias, mapped_value, confidence, rule in SERVICE_ALIAS_RULES:
+    for alias, mapped_value, confidence, rule in service_mapping_table():
         if alias in normalized:
             return MultiMappingItem(raw_value=cleaned, mapped_value=mapped_value, confidence=confidence, rule=rule)
 

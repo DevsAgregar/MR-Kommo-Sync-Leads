@@ -1,0 +1,48 @@
+raw_value,mapped_value,confidence,rule,notes
+botox,Botox,high,substring,Match por substring
+microagulhamento,Microagulhamento,high,substring,Match por substring
+skinbooster,Skinbooster,high,substring,Match por substring
+lavieen,Lavieen,high,substring,Match por substring
+criolipolise,Criolipólise,high,substring,Match por substring
+criofrequencia,Criofrequência,high,substring,Match por substring
+enzima,Enzimas,medium,family,Familia de enzimas
+luz pulsada,Luz Pulsada,high,substring,Match por substring
+microfocado full face,Ultrassom Microfocado Full Face,high,substring,Match por substring
+microfocado papada,Ultrassom Microfocado Papada,high,substring,Match por substring
+microfocado pescoco,Ultrassom Microfocado Pescoço,high,substring,Match por substring
+microfocado pescoço,Ultrassom Microfocado Pescoço,high,substring,Match por substring
+microfocado olhos,Ultrassom Microfocado Olhos,high,substring,Match por substring
+area dos olhos,Ultrassom Microfocado Olhos,medium,semantic,Equivalencia semantica
+microfocado abdomen,Ultrassom Microfocado Abdômen,high,substring,Match por substring
+microfocado abdômen,Ultrassom Microfocado Abdômen,high,substring,Match por substring
+microfocado contorno,Ultrassom Contorno,medium,semantic,Equivalencia semantica
+ultrassom contorno,Ultrassom Contorno,high,substring,Match por substring
+peeling,Peeling,high,substring,Match por substring
+pdrn,PDRN,high,substring,Match por substring
+ozonioterapia,Ozonioterapia,high,substring,Match por substring
+jato de plasma,Jato de Plasma,high,substring,Match por substring
+soroterapia,Soroterapia,high,substring,Match por substring
+radiofrequencia,Radiofrequência,high,substring,Match por substring
+radiofrequência,Radiofrequência,high,substring,Match por substring
+fios pdo,Fios de PDO,high,substring,Match por substring
+bioestimulador,Bioestimulador de Colágeno,high,family,Familia de bioestimulador
+acido hialuronico,Ácido Hialurônico,high,substring,Match por substring
+acido hialurônico,Ácido Hialurônico,high,substring,Match por substring
+preenchimento labial,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
+preenchimento facial,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
+preenchimento olheira,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
+pontilhismo facial,Pontilhismo Facial AH,high,substring,Match por substring
+rinomodelacao,Rinomodelação,high,substring,Match por substring
+rinomodelação,Rinomodelação,high,substring,Match por substring
+co2 glow up,CO2 Glow-Up,high,substring,Match por substring
+co2 full face,CO2 Resurfacing,medium,co2_family,Familia de CO2
+co2 colo,CO2 Resurfacing,medium,co2_family,Familia de CO2
+co2 pescoco,CO2 Resurfacing,medium,co2_family,Familia de CO2
+co2 pescoço,CO2 Resurfacing,medium,co2_family,Familia de CO2
+glowing complexion plus,Glowing Complexion Plus,high,substring,Match por substring
+glowing complexion,Glowing Complexion Bioregenere Plus,medium,family,Familia Glowing
+massagem facial relaxante,Massagem S.O.S Relaxante,medium,family,Familia Massagem SOS
+drenagem local,Drenagem Linfática,medium,family,Familia drenagem
+drenagem linfatica,Drenagem Linfática,high,substring,Match por substring
+drenagem linfática,Drenagem Linfática,high,substring,Match por substring
+tratamento capilar,Protocolo Capilar,high,semantic,Equivalencia semantica

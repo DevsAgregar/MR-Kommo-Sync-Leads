@@ -20,7 +20,15 @@ Nada foi alterado no projeto de origem. O que foi espelhado aqui:
 ## Estrutura
 
 - `login.py`
+- `env_config.py`
 - `kommo_leads_sqlite.py`
+- `clinic_kommo_field_mappings.py`
+- `clinic_kommo_payload_preview.py`
+- `clinic_kommo_sync_controlled_test.py`
+- `clinic_operational_fields_sync.py`
+- `sanity_check_secrets.py`
+- `mappings/clinic_kommo_origin_mapping.csv`
+- `mappings/clinic_kommo_service_mapping.csv`
 - `mirella_pacientes.sqlite3`
 - `.env.example`
 - `requirements.txt`
@@ -31,9 +39,22 @@ Nada foi alterado no projeto de origem. O que foi espelhado aqui:
 py -3 -m pip install -r requirements.txt
 ```
 
+Sanity check de segredos antes de commitar:
+
+```powershell
+py -3 sanity_check_secrets.py
+```
+
 ## Variaveis de ambiente
 
 Copie `.env.example` para `.env` e ajuste se quiser sobrescrever os padroes do script.
+
+Os scripts carregam o `.env` pelo helper centralizado [env_config.py](C:/Users/User/Desktop/tatimr/env_config.py), para evitar duplicacao de loader e manter credenciais fora do codigo versionado.
+
+As tabelas de mapeamento de negocio entre Clinica Agil e Kommo ficam em:
+
+- [mappings/clinic_kommo_origin_mapping.csv](C:/Users/User/Desktop/tatimr/mappings/clinic_kommo_origin_mapping.csv)
+- [mappings/clinic_kommo_service_mapping.csv](C:/Users/User/Desktop/tatimr/mappings/clinic_kommo_service_mapping.csv)
 
 ## Exemplos de uso
 

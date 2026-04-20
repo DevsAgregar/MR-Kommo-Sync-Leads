@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 import requests
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+from env_config import load_env_file
 
 
 DEFAULT_SUBDOMAIN = "mirellarabelo"
@@ -28,21 +29,6 @@ DEFAULT_TIMEOUT_MS = 60_000
 
 class KommoAuthError(RuntimeError):
     pass
-
-
-def _load_env_file(path: Path) -> None:
-    if not path.exists():
-        return
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -774,7 +760,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    _load_env_file(Path(".env"))
+    load_env_file(Path(".env"))
     parser = build_parser()
     args = parser.parse_args()
 

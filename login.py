@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import requests
+from env_config import default_env_file, env_int, load_env_file, runtime_root
 
 try:
     from openpyxl import load_workbook
@@ -35,16 +36,8 @@ except ImportError:
 
 BASE_URL = "https://app2.clinicaagil.com.br"
 
-
-def _runtime_root() -> Path:
-    override = os.getenv("MIRELLA_RUNTIME_ROOT")
-    if override:
-        return Path(override).resolve()
-    return Path(__file__).resolve().parent
-
-
-RUNTIME_ROOT = _runtime_root()
-DEFAULT_ENV_FILE = RUNTIME_ROOT / ".env"
+RUNTIME_ROOT = runtime_root()
+DEFAULT_ENV_FILE = default_env_file()
 DEFAULT_TIMEOUT = 60
 DEFAULT_EMAIL = ""
 DEFAULT_SENHA = ""
@@ -166,39 +159,6 @@ FINANCIAL_RECEIPTS_COLUMNS = [
 ]
 
 PLACEHOLDER_STRINGS = {"'", "-", "--", "+55", "+55 "}
-
-
-def _load_env_file(env_path: Path) -> None:
-    if not env_path.exists():
-        return
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export "):].strip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
-            value = value[1:-1]
-        if key not in os.environ:
-            os.environ[key] = value
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None or not raw.strip():
-        return default
-    try:
-        return int(raw.strip())
-    except ValueError:
-        return default
-
 
 def _hoje_br() -> str:
     return datetime.now().strftime("%d/%m/%Y")
@@ -1647,7 +1607,7 @@ def _criar_parser() -> argparse.ArgumentParser:
     parser.add_argument("--email", default=os.getenv("MIRELLA_EMAIL", DEFAULT_EMAIL))
     parser.add_argument("--senha", default=os.getenv("MIRELLA_SENHA", DEFAULT_SENHA))
     parser.add_argument("--cookie", default=os.getenv("MIRELLA_COOKIE"))
-    parser.add_argument("--timeout", type=int, default=_env_int("MIRELLA_TIMEOUT", DEFAULT_TIMEOUT))
+    parser.add_argument("--timeout", type=int, default=env_int("MIRELLA_TIMEOUT", DEFAULT_TIMEOUT))
     parser.add_argument("--output-dir", default=str(Path(os.getenv("MIRELLA_OUTPUT_DIR", DEFAULT_OUTPUT_DIR))))
     parser.add_argument("--db-path", default=str(Path(os.getenv("MIRELLA_DB_PATH", DEFAULT_DB_PATH))))
     parser.add_argument("--somente", choices=("ambos", "vendas", "pacientes"), default="ambos")
@@ -1662,7 +1622,7 @@ def _criar_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
-    _load_env_file(DEFAULT_ENV_FILE)
+    load_env_file(DEFAULT_ENV_FILE)
     parser = _criar_parser()
     args = parser.parse_args()
 
