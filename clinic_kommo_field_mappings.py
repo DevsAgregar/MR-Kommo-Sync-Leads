@@ -8,8 +8,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from env_config import runtime_root
 
-MAPPINGS_DIR = Path(__file__).resolve().parent / "mappings"
+MAPPINGS_DIR = runtime_root() / "mappings"
 ORIGIN_MAPPING_CSV = MAPPINGS_DIR / "clinic_kommo_origin_mapping.csv"
 SERVICE_MAPPING_CSV = MAPPINGS_DIR / "clinic_kommo_service_mapping.csv"
 

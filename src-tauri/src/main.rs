@@ -6,8 +6,43 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+use tauri::{path::BaseDirectory, AppHandle, Manager, Runtime};
 
-fn repo_root() -> Result<PathBuf, String> {
+const RUNTIME_FILES: &[(&str, &str)] = &[
+    ("runtime/.env", ".env"),
+    ("runtime/mirella_pacientes.sqlite3", "mirella_pacientes.sqlite3"),
+    ("runtime/mirella_kommo_leads.sqlite3", "mirella_kommo_leads.sqlite3"),
+    ("runtime/mappings/clinic_kommo_origin_mapping.csv", "mappings/clinic_kommo_origin_mapping.csv"),
+    ("runtime/mappings/clinic_kommo_service_mapping.csv", "mappings/clinic_kommo_service_mapping.csv"),
+    ("runtime/profiles/kommo_state.json", "profiles/kommo_state.json"),
+    ("runtime/exports/kommo/kommo_leads_latest.sql", "exports/kommo/kommo_leads_latest.sql"),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_preview_summary.json",
+        "exports/sync_preview/clinic_kommo_preview_summary.json",
+    ),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_preview_summary.md",
+        "exports/sync_preview/clinic_kommo_preview_summary.md",
+    ),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_safe_payloads.json",
+        "exports/sync_preview/clinic_kommo_safe_payloads.json",
+    ),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_safe_rows.csv",
+        "exports/sync_preview/clinic_kommo_safe_rows.csv",
+    ),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_review_rows.csv",
+        "exports/sync_preview/clinic_kommo_review_rows.csv",
+    ),
+    (
+        "runtime/exports/sync_preview/clinic_kommo_all_actions.csv",
+        "exports/sync_preview/clinic_kommo_all_actions.csv",
+    ),
+];
+
+fn dev_repo_root() -> Result<PathBuf, String> {
     let current = std::env::current_dir().map_err(|error| error.to_string())?;
     if current.file_name().and_then(|name| name.to_str()) == Some("src-tauri") {
         return current
@@ -16,6 +51,48 @@ fn repo_root() -> Result<PathBuf, String> {
             .ok_or_else(|| "Could not resolve repository root".to_string());
     }
     Ok(current)
+}
+
+fn is_dev_mode() -> bool {
+    cfg!(debug_assertions)
+}
+
+fn runtime_root<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> {
+    if is_dev_mode() {
+        return dev_repo_root();
+    }
+    let app_data = handle
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    fs::create_dir_all(&app_data).map_err(|error| error.to_string())?;
+    Ok(app_data)
+}
+
+fn ensure_runtime_seeded<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> {
+    let runtime_dir = runtime_root(handle)?;
+    if is_dev_mode() {
+        return Ok(runtime_dir);
+    }
+
+    for (resource_name, runtime_name) in RUNTIME_FILES {
+        let target = runtime_dir.join(runtime_name);
+        if target.exists() {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let resource = handle
+            .path()
+            .resolve(resource_name, BaseDirectory::Resource)
+            .map_err(|error| error.to_string())?;
+        if !resource.exists() {
+            continue;
+        }
+        fs::copy(&resource, &target).map_err(|error| error.to_string())?;
+    }
+    Ok(runtime_dir)
 }
 
 fn read_json_if_exists(path: &Path) -> Option<Value> {
@@ -56,9 +133,47 @@ fn file_meta(path: &Path) -> Value {
     }
 }
 
+fn sidecar_path<R: Runtime>(handle: &AppHandle<R>, executable_name: &str) -> Result<PathBuf, String> {
+    let resource = handle
+        .path()
+        .resolve(format!("backend/{executable_name}.exe"), BaseDirectory::Resource)
+        .map_err(|error| error.to_string())?;
+    Ok(resource)
+}
+
+fn run_backend_command<R: Runtime>(
+    handle: &AppHandle<R>,
+    executable_name: &str,
+    script_name: &str,
+    args: &[&str],
+) -> Result<String, String> {
+    let runtime_dir = ensure_runtime_seeded(handle)?;
+    let mut command = if is_dev_mode() {
+        let mut cmd = Command::new("py");
+        cmd.arg("-3").arg(script_name);
+        cmd
+    } else {
+        Command::new(sidecar_path(handle, executable_name)?)
+    };
+
+    command
+        .args(args)
+        .current_dir(&runtime_dir)
+        .env("MIRELLA_RUNTIME_ROOT", &runtime_dir);
+
+    let output = command.output().map_err(|error| error.to_string())?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    if output.status.success() {
+        Ok(stdout)
+    } else {
+        Err(if stderr.trim().is_empty() { stdout } else { stderr })
+    }
+}
+
 #[tauri::command]
-fn get_dashboard_snapshot() -> Result<Value, String> {
-    let root = repo_root()?;
+fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let root = ensure_runtime_seeded(&handle)?;
     let preview_dir = root.join("exports").join("sync_preview");
     let summary_path = preview_dir.join("clinic_kommo_preview_summary.json");
     let safe_payloads_path = preview_dir.join("clinic_kommo_safe_payloads.json");
@@ -95,96 +210,100 @@ fn get_dashboard_snapshot() -> Result<Value, String> {
     Ok(snapshot)
 }
 
-fn run_python_command(script: &str, args: &[&str]) -> Result<String, String> {
-    let root = repo_root()?;
-    let mut command = Command::new("py");
-    command.arg("-3").arg(script).args(args).current_dir(root);
-    let output = command
-        .output()
-        .map_err(|error| error.to_string())?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if output.status.success() {
-        Ok(stdout)
-    } else {
-        Err(if stderr.trim().is_empty() { stdout } else { stderr })
-    }
-}
-
 #[tauri::command]
-fn run_preview() -> Result<Value, String> {
-    let stdout = run_python_command("clinic_kommo_payload_preview.py", &[])?;
+fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let stdout = run_backend_command(&handle, "clinic_kommo_payload_preview", "clinic_kommo_payload_preview.py", &[])?;
     Ok(json!({
         "stdout": stdout,
-        "snapshot": get_dashboard_snapshot()?
+        "snapshot": get_dashboard_snapshot(handle)?
     }))
 }
 
 #[tauri::command]
-fn run_secret_check() -> Result<Value, String> {
-    let stdout = run_python_command("sanity_check_secrets.py", &[])?;
+fn run_secret_check<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let stdout = run_backend_command(&handle, "sanity_check_secrets", "sanity_check_secrets.py", &[])?;
     Ok(json!({ "stdout": stdout }))
 }
 
-fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, Vec<&'static str>)>, String> {
+fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, &'static str, Vec<&'static str>)>, String> {
     let steps = match task {
         "quick" => vec![
-            ("Atualizar Clínica", "login.py", vec!["--sem-input"]),
+            ("Atualizar Clínica", "login", "login.py", vec!["--sem-input"]),
             (
                 "Extrair campos operacionais",
+                "clinic_operational_fields_sync",
                 "clinic_operational_fields_sync.py",
                 vec!["--patient-scope", "matched", "--workers", "4"],
             ),
-            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "incremental"]),
-            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
+            (
+                "Atualizar Kommo",
+                "kommo_leads_sqlite",
+                "kommo_leads_sqlite.py",
+                vec!["--sync-mode", "incremental"],
+            ),
+            (
+                "Gerar prévia",
+                "clinic_kommo_payload_preview",
+                "clinic_kommo_payload_preview.py",
+                vec![],
+            ),
         ],
         "full" => vec![
-            ("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
+            ("Atualizar Clínica", "login", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
             (
                 "Extrair campos operacionais",
+                "clinic_operational_fields_sync",
                 "clinic_operational_fields_sync.py",
                 vec!["--patient-scope", "all", "--workers", "4"],
             ),
-            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "full"]),
-            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
+            (
+                "Atualizar Kommo",
+                "kommo_leads_sqlite",
+                "kommo_leads_sqlite.py",
+                vec!["--sync-mode", "full"],
+            ),
+            (
+                "Gerar prévia",
+                "clinic_kommo_payload_preview",
+                "clinic_kommo_payload_preview.py",
+                vec![],
+            ),
         ],
-        "clinic" => vec![("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"])],
-        "operational" => vec![("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec!["--patient-scope", "matched", "--workers", "4"])],
-        "kommo" => vec![("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "incremental"])],
-        "preview" => vec![("Gerar prévia", "clinic_kommo_payload_preview.py", vec![])],
-        "all" => vec![
-            ("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
-            ("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec!["--patient-scope", "all", "--workers", "4"]),
-            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec!["--sync-mode", "full"]),
-            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
-        ],
+        "clinic" => vec![("Atualizar Clínica", "login", "login.py", vec!["--sem-input", "--reprocessar-pacientes"])],
+        "operational" => vec![(
+            "Extrair campos operacionais",
+            "clinic_operational_fields_sync",
+            "clinic_operational_fields_sync.py",
+            vec!["--patient-scope", "matched", "--workers", "4"],
+        )],
+        "kommo" => vec![("Atualizar Kommo", "kommo_leads_sqlite", "kommo_leads_sqlite.py", vec!["--sync-mode", "incremental"])],
+        "preview" => vec![("Gerar prévia", "clinic_kommo_payload_preview", "clinic_kommo_payload_preview.py", vec![])],
         _ => return Err(format!("Unknown sync task: {task}")),
     };
     Ok(steps)
 }
 
 #[tauri::command]
-fn run_sync_task(task: String) -> Result<Value, String> {
+fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result<Value, String> {
     let mut logs: Vec<Value> = Vec::new();
-    for (label, script, args) in sync_steps(&task)? {
-        let stdout = run_python_command(script, &args)?;
+    for (label, executable_name, script_name, args) in sync_steps(&task)? {
+        let stdout = run_backend_command(&handle, executable_name, script_name, &args)?;
         logs.push(json!({
             "label": label,
-            "script": script,
+            "script": script_name,
             "stdout": stdout
         }));
     }
     Ok(json!({
         "task": task,
         "logs": logs,
-        "snapshot": get_dashboard_snapshot()?
+        "snapshot": get_dashboard_snapshot(handle)?
     }))
 }
 
 #[tauri::command]
-fn read_mapping(kind: String) -> Result<String, String> {
-    let root = repo_root()?;
+fn read_mapping<R: Runtime>(handle: AppHandle<R>, kind: String) -> Result<String, String> {
+    let root = ensure_runtime_seeded(&handle)?;
     let file_name = match kind.as_str() {
         "origin" => "clinic_kommo_origin_mapping.csv",
         "service" => "clinic_kommo_service_mapping.csv",
@@ -194,8 +313,8 @@ fn read_mapping(kind: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-fn read_review_rows() -> Result<String, String> {
-    let root = repo_root()?;
+fn read_review_rows<R: Runtime>(handle: AppHandle<R>) -> Result<String, String> {
+    let root = ensure_runtime_seeded(&handle)?;
     fs::read_to_string(
         root.join("exports")
             .join("sync_preview")
@@ -205,17 +324,32 @@ fn read_review_rows() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn apply_safe_payloads() -> Result<Value, String> {
-    let apply_stdout = run_python_command("apply_kommo_safe_payloads.py", &["--apply"])?;
-    let sync_stdout = run_python_command("kommo_leads_sqlite.py", &["--sync-mode", "incremental"])?;
-    let preview_stdout = run_python_command("clinic_kommo_payload_preview.py", &[])?;
+fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let apply_stdout = run_backend_command(
+        &handle,
+        "apply_kommo_safe_payloads",
+        "apply_kommo_safe_payloads.py",
+        &["--apply"],
+    )?;
+    let sync_stdout = run_backend_command(
+        &handle,
+        "kommo_leads_sqlite",
+        "kommo_leads_sqlite.py",
+        &["--sync-mode", "incremental"],
+    )?;
+    let preview_stdout = run_backend_command(
+        &handle,
+        "clinic_kommo_payload_preview",
+        "clinic_kommo_payload_preview.py",
+        &[],
+    )?;
     Ok(json!({
         "logs": [
             { "label": "Aplicar no Kommo", "stdout": apply_stdout },
             { "label": "Atualizar espelho Kommo", "stdout": sync_stdout },
             { "label": "Gerar nova prévia", "stdout": preview_stdout }
         ],
-        "snapshot": get_dashboard_snapshot()?
+        "snapshot": get_dashboard_snapshot(handle)?
     }))
 }
 

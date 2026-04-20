@@ -10,6 +10,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "installer": "py -3 build_desktop_installer.py",
     "check:secrets": "py -3 sanity_check_secrets.py"
   },
   "dependencies": {
