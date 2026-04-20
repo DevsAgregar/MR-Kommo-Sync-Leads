@@ -25,17 +25,20 @@ from clinic_kommo_field_mappings import (
 DEFAULT_PATIENT_DB = Path("mirella_pacientes.sqlite3")
 DEFAULT_KOMMO_DB = Path("mirella_kommo_leads.sqlite3")
 DEFAULT_OUTPUT_DIR = Path("exports") / "sync_preview"
+SAFE_ACTIONS = {"fill_empty", "update_if_greater", "update_if_newer", "merge"}
 
 
 @dataclass(frozen=True)
 class FieldSpec:
-    field_id: int
+    field_id: Optional[int]
     slug: str
     label: str
     value_kind: str
+    target: str = "custom_field"
 
 
 FIELD_SPECS: Sequence[FieldSpec] = (
+    FieldSpec(None, "sale_value", "Venda", "numeric", "lead_price"),
     FieldSpec(1561315, "birthday", "Data de aniversário", "date"),
     FieldSpec(1561939, "age_bucket", "Faixa Etária", "text"),
     FieldSpec(1559591, "status", "Status do Cliente", "text"),
@@ -73,7 +76,10 @@ def _normalize_numeric(value: Any) -> Optional[str]:
     text = str(value).strip().replace("R$", "").strip()
     if not text:
         return None
-    text = text.replace(".", "").replace(",", ".")
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
     try:
         return f"{float(text):.2f}"
     except ValueError:
@@ -137,6 +143,94 @@ def _comparable_value(kind: str, value: Any) -> Optional[str]:
     return _normalize_text(value)
 
 
+def _numeric_float(value: Any) -> Optional[float]:
+    normalized = _normalize_numeric(value)
+    if normalized is None:
+        return None
+    try:
+        return float(normalized)
+    except ValueError:
+        return None
+
+
+def _integer_value(value: Any) -> Optional[int]:
+    normalized = _normalize_integer(value)
+    if normalized is None:
+        return None
+    try:
+        return int(normalized)
+    except ValueError:
+        return None
+
+
+def _datetime_sort_value(kind: str, value: Any) -> Optional[datetime]:
+    normalized = _normalize_datetime(value) if kind == "datetime" else _normalize_date(value)
+    if not normalized:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _is_empty_value(value: Any) -> bool:
+    if value in (None, ""):
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (int, float)):
+        return float(value) == 0
+    return False
+
+
+def _current_multiselect_values(raw_current: Any) -> List[str]:
+    if raw_current in (None, ""):
+        return []
+    values = [item.strip() for item in str(raw_current).split(";") if item.strip()]
+    result: List[str] = []
+    for value in values:
+        if value not in result:
+            result.append(value)
+    return result
+
+
+def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any) -> Tuple[str, Optional[str], Optional[str]]:
+    current = _comparable_value(spec.value_kind, current_raw)
+    candidate = _comparable_value(spec.value_kind, candidate_raw)
+    if candidate in (None, ""):
+        return "skip", current, candidate
+
+    if _is_empty_value(current_raw):
+        return "fill_empty", current, candidate
+
+    if spec.slug in {"billed_total", "sale_value"}:
+        current_number = _numeric_float(current_raw)
+        candidate_number = _numeric_float(candidate_raw)
+        if current_number is not None and candidate_number is not None and candidate_number > current_number:
+            return "update_if_greater", current, candidate
+        return "skip", current, candidate
+
+    if spec.slug == "visits":
+        current_number = _integer_value(current_raw)
+        candidate_number = _integer_value(candidate_raw)
+        if current_number is not None and candidate_number is not None and candidate_number > current_number:
+            return "update_if_greater", current, candidate
+        return "skip", current, candidate
+
+    if spec.slug in {"last_visit", "appointment", "next_consultation"}:
+        current_date = _datetime_sort_value(spec.value_kind, current_raw)
+        candidate_date = _datetime_sort_value(spec.value_kind, candidate_raw)
+        if current_date is not None and candidate_date is not None and candidate_date > current_date:
+            return "update_if_newer", current, candidate
+        if current != candidate and spec.slug in {"appointment", "next_consultation"}:
+            return "update_if_newer", current, candidate
+        return "skip", current, candidate
+
+    return "skip", current, candidate
+
+
 def _calculate_age(birth_iso: Optional[str]) -> Optional[int]:
     normalized = _normalize_date(birth_iso)
     if not normalized:
@@ -167,31 +261,50 @@ def _age_bucket(age: Optional[int]) -> Optional[str]:
 def _load_patients(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = conn.execute(
         """
+        WITH ranked_sales AS (
+            SELECT
+                matched_patient_id AS patient_id,
+                competencia AS last_sale_competencia,
+                total_liquido AS last_sale_value,
+                ROW_NUMBER() OVER (
+                    PARTITION BY matched_patient_id
+                    ORDER BY
+                        substr(competencia, 7, 4) || '-' || substr(competencia, 4, 2) || '-' || substr(competencia, 1, 2) DESC,
+                        sale_id DESC
+                ) AS rn
+            FROM patient_financial_sales
+            WHERE matched_patient_id IS NOT NULL
+        )
         SELECT
-            patient_id,
-            nome,
-            data_nascimento,
-            status,
-            total_vendido_liquido,
-            total_vendas_linhas,
-            origem,
-            ultima_visita,
-            agendamento,
-            proxima_consulta,
-            servicos_json
-        FROM vw_patients_complete_operational
+            ops.patient_id,
+            ops.nome,
+            ops.data_nascimento,
+            ops.status,
+            ops.total_vendido_liquido,
+            ops.total_vendas_linhas,
+            ops.origem,
+            ops.ultima_visita,
+            ops.agendamento,
+            ops.proxima_consulta,
+            ops.servicos_json,
+            sales.last_sale_competencia,
+            sales.last_sale_value
+        FROM vw_patients_complete_operational ops
+        LEFT JOIN ranked_sales sales
+            ON sales.patient_id = ops.patient_id
+           AND sales.rn = 1
         """
     ).fetchall()
     return [dict(row) for row in rows]
 
 
 def _load_leads(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
-    rows = conn.execute("SELECT lead_id, name FROM kommo_leads").fetchall()
+    rows = conn.execute("SELECT lead_id, name, price FROM kommo_leads").fetchall()
     return [dict(row) for row in rows]
 
 
 def _load_current_field_values(conn: sqlite3.Connection) -> Dict[int, Dict[int, Optional[str]]]:
-    field_ids = ",".join(str(spec.field_id) for spec in FIELD_SPECS)
+    field_ids = ",".join(str(spec.field_id) for spec in FIELD_SPECS if spec.field_id is not None)
     current_values: Dict[int, Dict[int, Optional[str]]] = defaultdict(dict)
     for row in conn.execute(
         f"""
@@ -274,11 +387,24 @@ def _build_patient_candidate_values(
     origin_result = map_origin(_normalize_text(patient.get("origem")))
     raw_services = json.loads(patient["servicos_json"]) if patient.get("servicos_json") else []
     service_results = map_service_items(raw_services, enum_maps[1561309])
+    flattened_services: List[str] = []
+    for item in service_results:
+        for mapped in item.mapped_values:
+            if mapped not in flattened_services:
+                flattened_services.append(mapped)
+    all_services_mapped = bool(raw_services) and all(item.mapped_values for item in service_results)
+    all_services_high = all_services_mapped and all(item.confidence == "high" for item in service_results)
 
     return {
+        0: {
+            "kind": "numeric",
+            "candidate_value": patient.get("last_sale_value"),
+            "confidence": "high",
+            "rule": "financial_latest_sale_value",
+        },
         1561315: {
             "kind": "date",
-            "candidate_value": _normalize_date(patient.get("data_nascimento")),
+            "candidate_value": patient.get("data_nascimento"),
             "confidence": "high",
             "rule": "direct_patient_birthdate",
         },
@@ -290,37 +416,37 @@ def _build_patient_candidate_values(
         },
         1559591: {
             "kind": "text",
-            "candidate_value": _normalize_text(patient.get("status")),
+            "candidate_value": patient.get("status"),
             "confidence": "high",
             "rule": "direct_patient_status",
         },
         1561947: {
             "kind": "numeric",
-            "candidate_value": _normalize_numeric(patient.get("total_vendido_liquido")),
+            "candidate_value": patient.get("total_vendido_liquido"),
             "confidence": "high",
             "rule": "financial_summary_total_vendido_liquido",
         },
         1559587: {
             "kind": "integer",
-            "candidate_value": _normalize_integer(patient.get("total_vendas_linhas")),
+            "candidate_value": patient.get("total_vendas_linhas"),
             "confidence": "high",
             "rule": "financial_summary_total_vendas_linhas",
         },
         1561317: {
             "kind": "date",
-            "candidate_value": _normalize_date(patient.get("ultima_visita")),
+            "candidate_value": patient.get("ultima_visita"),
             "confidence": "high",
             "rule": "operational_last_visit",
         },
         1555897: {
             "kind": "datetime",
-            "candidate_value": _normalize_datetime(patient.get("agendamento")),
+            "candidate_value": patient.get("agendamento"),
             "confidence": "high",
             "rule": "operational_next_appointment",
         },
         1574511: {
             "kind": "datetime",
-            "candidate_value": _normalize_datetime(patient.get("proxima_consulta")),
+            "candidate_value": patient.get("proxima_consulta"),
             "confidence": "high",
             "rule": "operational_next_consultation",
         },
@@ -333,13 +459,11 @@ def _build_patient_candidate_values(
         },
         1561309: {
             "kind": "multiselect",
-            "candidate_value": [item.mapped_value for item in service_results if item.mapped_value],
+            "candidate_value": flattened_services,
             "confidence": (
-                "high"
-                if service_results and all(item.confidence == "high" for item in service_results if item.mapped_value)
-                else "medium"
-                if any(item.mapped_value for item in service_results)
-                else "none"
+                "high" if all_services_high else
+                "medium" if all_services_mapped else
+                "none"
             ),
             "rule": "service_mapping_bundle",
             "raw_value": raw_services,
@@ -417,9 +541,18 @@ def _write_markdown(
     lines.extend(
         [
             "",
+            "## Action Policy",
+            "",
+            "- `fill_empty`: Kommo value is empty and clinic value is available.",
+            "- `update_if_greater`: clinic numeric value is greater than Kommo.",
+            "- `update_if_newer`: clinic date/datetime is newer or the next appointment changed.",
+            "- `merge`: multiselect receives mapped values without removing existing values.",
+            "- `skip`: no safe change is needed.",
+            "",
             "## Notes",
             "",
-            "- Safe payloads only fill Kommo fields that are empty.",
+            "- Safe payloads include fill, greater/newer updates, and multiselect merges according to field policy.",
+            "- `Venda` is previewed through the lead root field `price`, using the latest clinic sale value.",
             "- `Origem` and `Serviço` use mapping rules and can fall into review when confidence is not high.",
             "- `Serviço` preview may include one or more enum values because the Kommo field is multiselect.",
         ]
@@ -441,48 +574,58 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
         matches, match_summary = _match_exact_unique_names(patients, leads)
 
         field_stats = {
-            spec.slug: {"candidate": 0, "safe_fill": 0, "review_fill": 0, "unmapped": 0}
+            spec.slug: {
+                "candidate": 0,
+                "safe_fill": 0,
+                "review_fill": 0,
+                "unmapped": 0,
+                "fill_empty": 0,
+                "update_if_greater": 0,
+                "update_if_newer": 0,
+                "merge": 0,
+                "skip": 0,
+            }
             for spec in FIELD_SPECS
         }
         safe_rows: List[Dict[str, Any]] = []
         review_rows: List[Dict[str, Any]] = []
+        all_rows: List[Dict[str, Any]] = []
         safe_payloads_by_lead: Dict[int, Dict[str, Any]] = {}
 
         for patient, lead in matches:
             candidates = _build_patient_candidate_values(patient, enum_maps)
             lead_current = current_field_values.get(lead["lead_id"], {})
             for spec in FIELD_SPECS:
-                candidate = candidates[spec.field_id]
+                candidate_key = 0 if spec.field_id is None else spec.field_id
+                candidate = candidates[candidate_key]
                 kind = candidate["kind"]
 
-                raw_current = lead_current.get(spec.field_id)
+                raw_current = lead.get("price") if spec.target == "lead_price" else lead_current.get(spec.field_id)
                 if kind == "multiselect":
-                    current_missing = not (raw_current or "").strip()
+                    current_values = _current_multiselect_values(raw_current)
                     mapped_values = candidate["candidate_value"] or []
                     if candidate.get("raw_value"):
                         field_stats[spec.slug]["candidate"] += 1
                     if not mapped_values:
                         if candidate.get("raw_value"):
                             field_stats[spec.slug]["unmapped"] += 1
-                            review_rows.append(
-                                {
-                                    "match_strategy": "exact_unique_normalized_name",
-                                    "patient_id": patient["patient_id"],
-                                    "lead_id": lead["lead_id"],
-                                    "patient_name": patient["nome"],
-                                    "lead_name": lead["name"],
-                                    "field_slug": spec.slug,
-                                    "field_label": spec.label,
-                                    "current_value": raw_current or "",
-                                    "candidate_value": json.dumps(candidate.get("raw_value") or [], ensure_ascii=False),
-                                    "mapped_value": "",
-                                    "confidence": candidate["confidence"],
-                                    "rule": candidate["rule"],
-                                }
-                            )
-                        continue
-
-                    if not current_missing:
+                            row = {
+                                "match_strategy": "exact_unique_normalized_name",
+                                "patient_id": patient["patient_id"],
+                                "lead_id": lead["lead_id"],
+                                "patient_name": patient["nome"],
+                                "lead_name": lead["name"],
+                                "field_slug": spec.slug,
+                                "field_label": spec.label,
+                                "action": "review",
+                                "current_value": raw_current or "",
+                                "candidate_value": json.dumps(candidate.get("raw_value") or [], ensure_ascii=False),
+                                "mapped_value": "",
+                                "confidence": candidate["confidence"],
+                                "rule": candidate["rule"],
+                            }
+                            review_rows.append(row)
+                            all_rows.append(row)
                         continue
 
                     preview_values = [
@@ -495,6 +638,31 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                         continue
 
                     confidence = candidate["confidence"]
+                    new_preview_values = [
+                        item for item in preview_values if item["value"] not in current_values
+                    ]
+                    if not new_preview_values:
+                        field_stats[spec.slug]["skip"] += 1
+                        all_rows.append(
+                            {
+                                "match_strategy": "exact_unique_normalized_name",
+                                "patient_id": patient["patient_id"],
+                                "lead_id": lead["lead_id"],
+                                "patient_name": patient["nome"],
+                                "lead_name": lead["name"],
+                                "field_slug": spec.slug,
+                                "field_label": spec.label,
+                                "action": "skip",
+                                "current_value": raw_current or "",
+                                "candidate_value": json.dumps(candidate.get("raw_value") or [], ensure_ascii=False),
+                                "mapped_value": json.dumps([item["value"] for item in preview_values], ensure_ascii=False),
+                                "confidence": confidence,
+                                "rule": candidate["rule"],
+                            }
+                        )
+                        continue
+
+                    action = "fill_empty" if not current_values else "merge"
                     row = {
                         "match_strategy": "exact_unique_normalized_name",
                         "patient_id": patient["patient_id"],
@@ -503,6 +671,7 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                         "lead_name": lead["name"],
                         "field_slug": spec.slug,
                         "field_label": spec.label,
+                        "action": action,
                         "current_value": raw_current or "",
                         "candidate_value": json.dumps(candidate.get("raw_value") or [], ensure_ascii=False),
                         "mapped_value": json.dumps([item["value"] for item in preview_values], ensure_ascii=False),
@@ -511,17 +680,33 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                     }
                     if confidence == "high":
                         field_stats[spec.slug]["safe_fill"] += 1
+                        field_stats[spec.slug][action] += 1
                         safe_rows.append(row)
+                        all_rows.append(row)
                         payload = safe_payloads_by_lead.setdefault(
                             lead["lead_id"],
                             {"id": lead["lead_id"], "lead_name": lead["name"], "custom_fields_values": []},
                         )
+                        existing_preview_values = [
+                            _enum_preview_value(spec.field_id, current_value, enum_maps)
+                            for current_value in current_values
+                        ]
+                        existing_preview_values = [value for value in existing_preview_values if value is not None]
+                        combined_values: List[Dict[str, Any]] = []
+                        seen_enum_ids: set[Any] = set()
+                        for value in [*existing_preview_values, *preview_values]:
+                            enum_id = value.get("enum_id")
+                            if enum_id in seen_enum_ids:
+                                continue
+                            seen_enum_ids.add(enum_id)
+                            combined_values.append(value)
                         payload["custom_fields_values"].append(
-                            {"field_id": spec.field_id, "field_name": spec.label, "values": preview_values}
+                            {"field_id": spec.field_id, "field_name": spec.label, "values": combined_values}
                         )
                     else:
                         field_stats[spec.slug]["review_fill"] += 1
                         review_rows.append(row)
+                        all_rows.append(row)
                     continue
 
                 comparable_current = _comparable_value(spec.value_kind, raw_current)
@@ -530,7 +715,30 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                     continue
 
                 field_stats[spec.slug]["candidate"] += 1
-                if comparable_current:
+                action, comparable_current, comparable_candidate = _decide_direct_action(
+                    spec,
+                    raw_current,
+                    candidate["candidate_value"],
+                )
+                if action == "skip":
+                    field_stats[spec.slug]["skip"] += 1
+                    all_rows.append(
+                        {
+                            "match_strategy": "exact_unique_normalized_name",
+                            "patient_id": patient["patient_id"],
+                            "lead_id": lead["lead_id"],
+                            "patient_name": patient["nome"],
+                            "lead_name": lead["name"],
+                            "field_slug": spec.slug,
+                            "field_label": spec.label,
+                            "action": action,
+                            "current_value": comparable_current or "",
+                            "candidate_value": comparable_candidate or "",
+                            "mapped_value": comparable_candidate or "",
+                            "confidence": candidate["confidence"],
+                            "rule": candidate["rule"],
+                        }
+                    )
                     continue
 
                 row = {
@@ -541,6 +749,7 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                     "lead_name": lead["name"],
                     "field_slug": spec.slug,
                     "field_label": spec.label,
+                    "action": action,
                     "current_value": comparable_current or "",
                     "candidate_value": comparable_candidate,
                     "mapped_value": comparable_candidate,
@@ -548,21 +757,39 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                     "rule": candidate["rule"],
                 }
 
+                if spec.target == "lead_price":
+                    field_stats[spec.slug]["safe_fill"] += 1
+                    field_stats[spec.slug][action] += 1
+                    safe_rows.append(row)
+                    all_rows.append(row)
+                    payload = safe_payloads_by_lead.setdefault(
+                        lead["lead_id"],
+                        {"id": lead["lead_id"], "lead_name": lead["name"], "custom_fields_values": []},
+                    )
+                    payload["price"] = float(comparable_candidate)
+                    continue
+
                 if kind == "select":
                     mapped = candidate["candidate_value"]
                     if mapped is None:
                         field_stats[spec.slug]["unmapped"] += 1
+                        row["action"] = "review"
                         review_rows.append(row)
+                        all_rows.append(row)
                         continue
                     preview_value = _enum_preview_value(spec.field_id, mapped, enum_maps)
                     if preview_value is None:
                         field_stats[spec.slug]["unmapped"] += 1
+                        row["action"] = "review"
                         review_rows.append(row)
+                        all_rows.append(row)
                         continue
                     row["mapped_value"] = preview_value["value"]
                     if candidate["confidence"] == "high":
                         field_stats[spec.slug]["safe_fill"] += 1
+                        field_stats[spec.slug][action] += 1
                         safe_rows.append(row)
+                        all_rows.append(row)
                         payload = safe_payloads_by_lead.setdefault(
                             lead["lead_id"],
                             {"id": lead["lead_id"], "lead_name": lead["name"], "custom_fields_values": []},
@@ -572,12 +799,16 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                         )
                     else:
                         field_stats[spec.slug]["review_fill"] += 1
+                        row["action"] = "review"
                         review_rows.append(row)
+                        all_rows.append(row)
                     continue
 
                 # direct fields
                 field_stats[spec.slug]["safe_fill"] += 1
+                field_stats[spec.slug][action] += 1
                 safe_rows.append(row)
+                all_rows.append(row)
                 payload = safe_payloads_by_lead.setdefault(
                     lead["lead_id"],
                     {"id": lead["lead_id"], "lead_name": lead["name"], "custom_fields_values": []},
@@ -591,16 +822,20 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                 )
 
         safe_payloads = list(safe_payloads_by_lead.values())
+        action_counts = Counter(row["action"] for row in all_rows)
         payload = {
             "match_summary": match_summary,
             "field_stats": field_stats,
+            "action_counts": dict(action_counts),
             "safe_lead_count": len(safe_payloads),
             "safe_field_row_count": len(safe_rows),
             "review_field_row_count": len(review_rows),
+            "all_action_row_count": len(all_rows),
         }
 
         output_dir.mkdir(parents=True, exist_ok=True)
         _write_json(output_dir / "clinic_kommo_safe_payloads.json", safe_payloads)
+        _write_csv(output_dir / "clinic_kommo_all_actions.csv", all_rows)
         _write_csv(output_dir / "clinic_kommo_safe_rows.csv", safe_rows)
         _write_csv(output_dir / "clinic_kommo_review_rows.csv", review_rows)
         _write_json(output_dir / "clinic_kommo_preview_summary.json", payload)

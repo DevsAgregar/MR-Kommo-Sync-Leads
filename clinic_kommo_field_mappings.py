@@ -34,7 +34,7 @@ class ScalarMapping:
 @dataclass(frozen=True)
 class MultiMappingItem:
     raw_value: str
-    mapped_value: Optional[str]
+    mapped_values: Tuple[str, ...]
     confidence: str
     rule: str
 
@@ -89,7 +89,7 @@ def map_origin(raw_value: Optional[str]) -> ScalarMapping:
         )
 
     if normalized.startswith("dra ") or normalized.startswith("dr "):
-        return ScalarMapping(raw_value=cleaned, mapped_value="Parceria", confidence="medium", rule="doctor_prefix")
+        return ScalarMapping(raw_value=cleaned, mapped_value="Parceria", confidence="high", rule="doctor_prefix")
 
     return ScalarMapping(raw_value=cleaned, mapped_value=None, confidence="none", rule="unmapped")
 
@@ -103,7 +103,7 @@ def _best_direct_service_match(
         return None
     return MultiMappingItem(
         raw_value=normalized,
-        mapped_value=str(enum_info["value"]),
+        mapped_values=(str(enum_info["value"]),),
         confidence="high",
         rule="direct_exact",
     )
@@ -116,33 +116,34 @@ def map_service_item(
     cleaned = (raw_value or "").strip()
     normalized = normalize_token(cleaned)
     if not normalized:
-        return MultiMappingItem(raw_value=cleaned, mapped_value=None, confidence="none", rule="empty")
+        return MultiMappingItem(raw_value=cleaned, mapped_values=(), confidence="none", rule="empty")
 
     direct = _best_direct_service_match(normalized, enum_by_normalized)
     if direct is not None:
         return MultiMappingItem(
             raw_value=cleaned,
-            mapped_value=direct.mapped_value,
+            mapped_values=direct.mapped_values,
             confidence=direct.confidence,
             rule=direct.rule,
         )
 
     for alias, mapped_value, confidence, rule in service_mapping_table():
         if alias in normalized:
-            return MultiMappingItem(raw_value=cleaned, mapped_value=mapped_value, confidence=confidence, rule=rule)
+            mapped_values = tuple(value.strip() for value in mapped_value.split("|") if value.strip())
+            return MultiMappingItem(raw_value=cleaned, mapped_values=mapped_values, confidence=confidence, rule=rule)
 
     contains: List[Tuple[int, str]] = []
     for enum_normalized, enum_info in enum_by_normalized.items():
         if enum_normalized in normalized or normalized in enum_normalized:
             contains.append((len(enum_normalized), str(enum_info["value"])))
     if len(contains) == 1:
-        return MultiMappingItem(raw_value=cleaned, mapped_value=contains[0][1], confidence="medium", rule="contains_single")
+        return MultiMappingItem(raw_value=cleaned, mapped_values=(contains[0][1],), confidence="medium", rule="contains_single")
     if contains:
         contains.sort(reverse=True)
         if len(contains) == 1 or contains[0][0] > contains[1][0]:
-            return MultiMappingItem(raw_value=cleaned, mapped_value=contains[0][1], confidence="medium", rule="contains_longest")
+            return MultiMappingItem(raw_value=cleaned, mapped_values=(contains[0][1],), confidence="medium", rule="contains_longest")
 
-    return MultiMappingItem(raw_value=cleaned, mapped_value=None, confidence="none", rule="unmapped")
+    return MultiMappingItem(raw_value=cleaned, mapped_values=(), confidence="none", rule="unmapped")
 
 
 def map_service_items(

@@ -2,6 +2,7 @@
 .env
 .venv/
 venv/
+node_modules/
 
 # Runtime e sessao local
 profiles/
@@ -20,6 +21,10 @@ relatorio_vendas*.xlsx
 *.mov
 *.webm
 *.wav
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
 
 # Python
 __pycache__/

@@ -1,26 +1,26 @@
 raw_value,mapped_value,confidence,rule,notes
 anuncio,Anúncio Meta,high,direct_exact,Canal de anuncio geral
-facebook,Anúncio Meta,medium,channel_family,Tratar como Meta Ads
+facebook,Anúncio Meta,high,channel_family,Tratar como Meta Ads
 instagran,Instagram,high,direct_exact_typo,Correcao de grafia
 instagram,Instagram,high,direct_exact,Canal direto
 site,Site,high,direct_exact,Canal direto
-google,Site,medium,search_to_site,Busca tende a cair no site
-internet,Site,medium,generic_web,Origem web generica
+google,Site,high,search_to_site,Busca tende a cair no site
+internet,Site,high,generic_web,Origem web generica
 passou em frente,Agendamento Espontâneo,high,walk_in,Cliente presencial
 amigo,Indicação,high,referral,Indicacao pessoal
 atraves de outro paciente,Indicação,high,referral,Indicacao por paciente
 parente,Indicação,high,referral,Indicacao familiar
-funcionaria,Indicação,medium,internal_referral,Indicacao interna
-dra mirella,Parceria,medium,professional_referral,Profissional da clinica
-dra eloisa,Parceria,medium,professional_referral,Profissional da clinica
-dra diandra,Parceria,medium,professional_referral,Profissional/parceira
-daniela barbosa,Parceria,medium,professional_referral,Profissional da clinica
-bruna costa,Parceria,medium,professional_referral,Parceira
-raquel rocha,Parceria,medium,professional_referral,Parceira
-renan simoes,Indicação,medium,named_referral,Indicacao nominal
+funcionaria,Indicação,high,internal_referral,Indicacao interna
+dra mirella,Parceria,high,professional_referral,Profissional da clinica
+dra eloisa,Parceria,high,professional_referral,Profissional da clinica
+dra diandra,Parceria,high,professional_referral,Profissional/parceira
+daniela barbosa,Parceria,high,professional_referral,Profissional da clinica
+bruna costa,Parceria,high,professional_referral,Parceira
+raquel rocha,Parceria,high,professional_referral,Parceira
+renan simoes,Indicação,high,named_referral,Indicacao nominal
 medico,Parceria,high,medical_partner,Origem medica
 atraves de outra clinica,Parceria,high,clinic_partner,Parceiro clinico
 salao absolut,Parceria,high,business_partner,Parceiro comercial
 dr luis neto cirurgiao plastico,Parceria,high,medical_partner,Parceiro medico
-colegio ipe indicacao da dra mirella,Parceria,medium,partner_network,Rede de parceria
+colegio ipe indicacao da dra mirella,Parceria,high,partner_network,Rede de parceria
 monyke secretaria dr waldivino guimaraes,Parceria,high,medical_partner,Parceiro medico

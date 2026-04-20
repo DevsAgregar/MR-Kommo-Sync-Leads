@@ -29,6 +29,8 @@ Nada foi alterado no projeto de origem. O que foi espelhado aqui:
 - `sanity_check_secrets.py`
 - `mappings/clinic_kommo_origin_mapping.csv`
 - `mappings/clinic_kommo_service_mapping.csv`
+- `src/`: interface React/TypeScript do app desktop
+- `src-tauri/`: backend Tauri para leitura dos artefatos locais e comandos controlados
 - `mirella_pacientes.sqlite3`
 - `.env.example`
 - `requirements.txt`
@@ -37,12 +39,20 @@ Nada foi alterado no projeto de origem. O que foi espelhado aqui:
 
 ```powershell
 py -3 -m pip install -r requirements.txt
+npm install
 ```
 
 Sanity check de segredos antes de commitar:
 
 ```powershell
 py -3 sanity_check_secrets.py
+```
+
+Validar interface desktop:
+
+```powershell
+npm run build
+$env:CARGO_TARGET_DIR="target\tauri-check"; cargo check --manifest-path src-tauri/Cargo.toml -j 1
 ```
 
 ## Variaveis de ambiente
@@ -57,6 +67,18 @@ As tabelas de mapeamento de negocio entre Clinica Agil e Kommo ficam em:
 - [mappings/clinic_kommo_service_mapping.csv](C:/Users/User/Desktop/tatimr/mappings/clinic_kommo_service_mapping.csv)
 
 ## Exemplos de uso
+
+Abrir o dashboard desktop em modo desenvolvimento:
+
+```powershell
+npm run tauri:dev
+```
+
+Gerar build do app desktop:
+
+```powershell
+npm run tauri:build
+```
 
 Sincronizar apenas pacientes:
 

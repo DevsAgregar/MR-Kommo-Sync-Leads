@@ -1,4 +1,44 @@
 raw_value,mapped_value,confidence,rule,notes
+sense on sculpture,Massagem SOS,high,product_family,Umbrella da linha Sense On Sculpture
+sense on sculpture 10 sessoes,Massagem SOS,high,product_family,Pacote da linha Sense On Sculpture
+retorno botox,Botox,high,return_family,Retorno do procedimento de Botox
+retorno do preenchimento labial,Ácido Hialurônico,high,return_family,Retorno de procedimento com preenchimento
+peeling quimico pos botox,Peeling,high,post_procedure_family,Peeling continua sendo a familia principal
+botox day feminino,Botox,high,product_family,Pacote de Botox
+synergy prime botox rosto completo feminino,Synergy Prime|Botox,high,composite_family,Pacote Synergy Prime com Botox
+synergy prime botox rosto completo masculino,Synergy Prime|Botox,high,composite_family,Pacote Synergy Prime com Botox
+limpeza de pele express,Glowing Complexion Essencial,medium,facial_cleaning_family,Associado a limpeza facial base da linha Glowing
+avaliacao facial,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+avaliacao corporal,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+avaliacao online,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+hialuronidase,Ácido Hialurônico,medium,correction_family,Relacionada a reversao de preenchimento com AH
+bioestimulador hialurox bio,Bioestimulador de Colágeno,high,product_family,Familia de bioestimulador
+preenchimento facial,Ácido Hialurônico,high,treatment_family,Preenchedor de AH
+preenchimento labial,Ácido Hialurônico,high,treatment_family,Preenchedor de AH
+mesotox microtox,Botox,high,treatment_family,Microtox e familia Botox
+co2 full face,CO2 Resurfacing,high,co2_family,Familia CO2
+co2 colo,CO2 Resurfacing,high,co2_family,Familia CO2
+co2 pescoco,CO2 Resurfacing,high,co2_family,Familia CO2
+co2 pescoço,CO2 Resurfacing,high,co2_family,Familia CO2
+glowing complexion,Glowing Complexion Essencial,medium,product_family,Uso generico da familia Glowing
+glowing pearl,Glowing Complexion Essencial,medium,product_family,Protocolo de limpeza/renovacao da linha Glowing
+glowing skinbooster,Skinbooster,high,component_family,Componente principal do protocolo
+lavieen full face,Lavieen,high,product_family,Familia Lavieen
+lavieen 03 regioes,Lavieen,high,product_family,Familia Lavieen
+enzima corporal,Enzimas,high,product_family,Familia de enzimas
+enzimas protocolo venus,Método Vênus|Enzimas,high,composite_family,Protocolo Venus com enzimas
+ultrassom microfocado contorno,Ultrassom Contorno,high,product_family,Familia de contorno
+ultrassom microfocado contorno papada,Ultrassom Contorno|Ultrassom Microfocado Papada,high,composite_family,Protocolo composto
+radiofrequencia corporal,Radiofrequência,high,product_family,Familia de radiofrequencia
+microagulhamento com serum,Microagulhamento,high,product_family,Familia de microagulhamento
+botox platisma,Botox,high,treatment_family,Familia Botox
+manthus,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+exossomos,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+laserterapia,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+gloss labial,Lip Reveal,medium,lip_family,Servico labial mais proximo
+dermo mr protetor solar em bastao,Dermocosméticos,high,product_family,Linha de dermocosmeticos
+furo em orelha,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+vitamina d 600 000 ui intramuscular,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
 botox,Botox,high,substring,Match por substring
 microagulhamento,Microagulhamento,high,substring,Match por substring
 skinbooster,Skinbooster,high,substring,Match por substring
