@@ -68,11 +68,23 @@ As tabelas de mapeamento de negocio entre Clinica Agil e Kommo ficam em:
 
 ## Exemplos de uso
 
-Abrir o dashboard desktop em modo desenvolvimento:
+Abrir o app desktop em modo desenvolvimento:
 
 ```powershell
 npm run tauri:dev
 ```
+
+A interface tem apenas duas telas de rotina:
+
+- `Atualizar`: executa a sincronizacao vigente e mostra o que esta pronto para atualizar no Kommo
+- `Revisar`: mostra somente pendencias que nao devem ser aplicadas automaticamente
+
+Na tela `Atualizar`, use **Atualizar agora** para executar a sequencia vigente:
+
+1. `login.py --sem-input --reprocessar-pacientes`
+2. `clinic_operational_fields_sync.py`
+3. `kommo_leads_sqlite.py`
+4. `clinic_kommo_payload_preview.py`
 
 Gerar build do app desktop:
 

@@ -36,13 +36,22 @@ fn read_mapping_count(path: &Path) -> usize {
 
 fn file_meta(path: &Path) -> Value {
     match fs::metadata(path) {
-        Ok(metadata) => json!({
-            "exists": true,
-            "bytes": metadata.len()
-        }),
+        Ok(metadata) => {
+            let modified_unix = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs());
+            json!({
+                "exists": true,
+                "bytes": metadata.len(),
+                "modifiedUnix": modified_unix
+            })
+        }
         Err(_) => json!({
             "exists": false,
-            "bytes": 0
+            "bytes": 0,
+            "modifiedUnix": null
         }),
     }
 }
@@ -84,12 +93,11 @@ fn get_dashboard_snapshot() -> Result<Value, String> {
     Ok(snapshot)
 }
 
-fn run_python_script(script: &str) -> Result<String, String> {
+fn run_python_command(script: &str, args: &[&str]) -> Result<String, String> {
     let root = repo_root()?;
-    let output = Command::new("py")
-        .arg("-3")
-        .arg(script)
-        .current_dir(root)
+    let mut command = Command::new("py");
+    command.arg("-3").arg(script).args(args).current_dir(root);
+    let output = command
         .output()
         .map_err(|error| error.to_string())?;
 
@@ -104,7 +112,7 @@ fn run_python_script(script: &str) -> Result<String, String> {
 
 #[tauri::command]
 fn run_preview() -> Result<Value, String> {
-    let stdout = run_python_script("clinic_kommo_payload_preview.py")?;
+    let stdout = run_python_command("clinic_kommo_payload_preview.py", &[])?;
     Ok(json!({
         "stdout": stdout,
         "snapshot": get_dashboard_snapshot()?
@@ -113,8 +121,43 @@ fn run_preview() -> Result<Value, String> {
 
 #[tauri::command]
 fn run_secret_check() -> Result<Value, String> {
-    let stdout = run_python_script("sanity_check_secrets.py")?;
+    let stdout = run_python_command("sanity_check_secrets.py", &[])?;
     Ok(json!({ "stdout": stdout }))
+}
+
+fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, Vec<&'static str>)>, String> {
+    let steps = match task {
+        "clinic" => vec![("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"])],
+        "operational" => vec![("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec![])],
+        "kommo" => vec![("Atualizar Kommo", "kommo_leads_sqlite.py", vec![])],
+        "preview" => vec![("Gerar prévia", "clinic_kommo_payload_preview.py", vec![])],
+        "all" => vec![
+            ("Atualizar Clínica", "login.py", vec!["--sem-input", "--reprocessar-pacientes"]),
+            ("Extrair campos operacionais", "clinic_operational_fields_sync.py", vec![]),
+            ("Atualizar Kommo", "kommo_leads_sqlite.py", vec![]),
+            ("Gerar prévia", "clinic_kommo_payload_preview.py", vec![]),
+        ],
+        _ => return Err(format!("Unknown sync task: {task}")),
+    };
+    Ok(steps)
+}
+
+#[tauri::command]
+fn run_sync_task(task: String) -> Result<Value, String> {
+    let mut logs: Vec<Value> = Vec::new();
+    for (label, script, args) in sync_steps(&task)? {
+        let stdout = run_python_command(script, &args)?;
+        logs.push(json!({
+            "label": label,
+            "script": script,
+            "stdout": stdout
+        }));
+    }
+    Ok(json!({
+        "task": task,
+        "logs": logs,
+        "snapshot": get_dashboard_snapshot()?
+    }))
 }
 
 #[tauri::command]
@@ -134,6 +177,7 @@ fn main() {
             get_dashboard_snapshot,
             run_preview,
             run_secret_check,
+            run_sync_task,
             read_mapping
         ])
         .run(tauri::generate_context!())
