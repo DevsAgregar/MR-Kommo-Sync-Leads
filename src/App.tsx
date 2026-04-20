@@ -4,6 +4,8 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   ClipboardList,
   Clock3,
   Database,
@@ -13,11 +15,12 @@ import {
   RefreshCw,
   Send,
   Sparkles,
+  Terminal,
   Users,
   XCircle,
   Zap
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type FieldStat = {
   candidate: number;
@@ -55,6 +58,8 @@ type CommandState = {
   message: string;
   ok: boolean | null;
   task?: string;
+  startedAt?: number;
+  finishedAt?: number;
 };
 
 type ReviewRow = {
@@ -70,20 +75,36 @@ type ReviewRow = {
 type Page = "sync" | "review";
 type SyncTask = "clinic" | "operational" | "kommo" | "preview" | "all" | "quick" | "full";
 type StepStatus = "idle" | "running" | "done" | "error";
+type Flow = "sync" | "apply";
 
 type ProgressEvent = {
-  flow: "sync" | "apply";
+  flow: Flow;
   task: string;
   step: string;
   status: "started" | "completed" | "failed" | "done";
   message: string;
 };
 
+type LogEvent = {
+  flow: Flow;
+  step: string;
+  stream: "stdout" | "stderr";
+  line: string;
+  tsMs: number;
+};
+
+type LogLine = { stream: "stdout" | "stderr"; line: string; tsMs: number };
+
 type StepState = {
   label: string;
   status: StepStatus;
   message?: string;
+  startedAt?: number;
+  finishedAt?: number;
 };
+
+const LOG_BUFFER_SIZE = 400;
+const PAGE_STORAGE_KEY = "mirella.lastPage";
 
 const fallbackSnapshot: Snapshot = {
   previewSummary: {
@@ -149,6 +170,15 @@ function number(value: number | undefined) {
   return new Intl.NumberFormat("pt-BR").format(value ?? 0);
 }
 
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return `${minutes}m ${rem.toString().padStart(2, "0")}s`;
+}
+
 function timeAgo(unixSeconds?: number | null) {
   if (!unixSeconds) return "ainda não atualizado";
   const minutes = Math.floor(Math.max(0, Date.now() - unixSeconds * 1000) / 60000);
@@ -165,7 +195,7 @@ function useSnapshot() {
   const [snapshot, setSnapshot] = useState<Snapshot>(fallbackSnapshot);
   const [desktop, setDesktop] = useState(false);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const result = await call<Snapshot>("get_dashboard_snapshot");
       setSnapshot(result);
@@ -174,11 +204,11 @@ function useSnapshot() {
       setSnapshot(fallbackSnapshot);
       setDesktop(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   return { snapshot, desktop, refresh };
 }
@@ -230,7 +260,7 @@ function parseCsv(text: string): string[][] {
 function useReviewRows() {
   const [rows, setRows] = useState<ReviewRow[]>([]);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const csv = await call<string>("read_review_rows");
       const parsed = parseCsv(csv);
@@ -246,27 +276,42 @@ function useReviewRows() {
     } catch {
       setRows([]);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void refresh();
-  }, []);
+  }, [refresh]);
 
   return { rows, refresh };
 }
 
-function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <section
-      className={cx(
-        "surface rounded-3xl border border-white/10 shadow-xl shadow-black/30",
-        className
-      )}
-    >
-      {children}
-    </section>
-  );
+function useElapsed(startedAt?: number, finishedAt?: number) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!startedAt || finishedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [startedAt, finishedAt]);
+  if (!startedAt) return null;
+  const end = finishedAt ?? now;
+  return Math.max(0, end - startedAt);
 }
+
+const Card = React.forwardRef<HTMLElement, { children: React.ReactNode; className?: string }>(
+  function Card({ children, className }, ref) {
+    return (
+      <section
+        ref={ref}
+        className={cx(
+          "surface rounded-2xl border border-white/10 shadow-lg shadow-black/30",
+          className
+        )}
+      >
+        {children}
+      </section>
+    );
+  }
+);
 
 function Pill({
   tone,
@@ -286,7 +331,7 @@ function Pill({
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide",
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
         styles
       )}
     >
@@ -310,37 +355,79 @@ function StatTile({
   icon: React.ReactNode;
 }) {
   const toneStyles = {
-    ok: {
-      accent: "text-emerald-300",
-      chip: "bg-emerald-400/15 text-emerald-200 border-emerald-400/30",
-      glow: "from-emerald-400/10 to-transparent"
-    },
-    info: {
-      accent: "text-cyan-300",
-      chip: "bg-cyan-400/15 text-cyan-200 border-cyan-400/30",
-      glow: "from-cyan-400/10 to-transparent"
-    },
-    warn: {
-      accent: "text-amber-300",
-      chip: "bg-amber-400/15 text-amber-100 border-amber-400/30",
-      glow: "from-amber-400/10 to-transparent"
-    }
+    ok: { accent: "text-emerald-300", chip: "bg-emerald-400/15 text-emerald-200 border-emerald-400/30", glow: "from-emerald-400/10 to-transparent" },
+    info: { accent: "text-cyan-300", chip: "bg-cyan-400/15 text-cyan-200 border-cyan-400/30", glow: "from-cyan-400/10 to-transparent" },
+    warn: { accent: "text-amber-300", chip: "bg-amber-400/15 text-amber-100 border-amber-400/30", glow: "from-amber-400/10 to-transparent" }
   }[tone];
 
   return (
-    <Card className="relative overflow-hidden p-6">
+    <Card className="relative overflow-hidden p-4">
       <div className={cx("absolute inset-0 bg-gradient-to-br", toneStyles.glow)} aria-hidden />
       <div className="relative">
-        <div className="flex items-start justify-between">
-          <p className="text-sm font-medium text-slate-400">{label}</p>
-          <div className={cx("rounded-xl border p-2", toneStyles.chip)}>{icon}</div>
+        <div className="flex items-start justify-between gap-2">
+          <p className="text-xs font-medium text-slate-400">{label}</p>
+          <div className={cx("rounded-lg border p-1.5", toneStyles.chip)}>{icon}</div>
         </div>
-        <p className={cx("mt-3 text-5xl font-bold tracking-tight", toneStyles.accent)}>
+        <p className={cx("mt-1.5 text-3xl font-bold tracking-tight", toneStyles.accent)}>
           {number(value)}
         </p>
-        <p className="mt-2 text-sm leading-5 text-slate-400">{help}</p>
+        <p className="mt-1 text-xs leading-4 text-slate-400">{help}</p>
       </div>
     </Card>
+  );
+}
+
+function LogTerminal({
+  lines,
+  running
+}: {
+  lines: LogLine[];
+  running: boolean;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const stickToBottom = useRef(true);
+
+  useEffect(() => {
+    if (!containerRef.current || !stickToBottom.current) return;
+    containerRef.current.scrollTop = containerRef.current.scrollHeight;
+  }, [lines]);
+
+  const handleScroll = () => {
+    const el = containerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = distanceFromBottom < 40;
+  };
+
+  if (!lines.length) {
+    return (
+      <div className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-[11px] text-slate-500">
+        {running ? "Aguardando saída do processo..." : "Sem saída registrada."}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="thin-scrollbar max-h-48 overflow-auto rounded-lg border border-white/10 bg-black/50 px-3 py-2 font-mono text-[11px] leading-[1.55] text-slate-300"
+      role="log"
+      aria-live="polite"
+      aria-relevant="additions"
+    >
+      {lines.map((log, index) => (
+        <div
+          key={`${log.tsMs}-${index}`}
+          className={cx(
+            "whitespace-pre-wrap break-words",
+            log.stream === "stderr" ? "text-rose-300" : "text-slate-300"
+          )}
+        >
+          {log.line || "\u00A0"}
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -348,108 +435,59 @@ function ProcessTracker({
   title,
   subtitle,
   steps,
-  running
+  running,
+  logs
 }: {
   title: string;
   subtitle?: string;
   steps: StepState[];
   running: boolean;
+  logs: Record<string, LogLine[]>;
 }) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    const running = steps.find((s) => s.status === "running");
+    if (running) {
+      setExpanded((prev) => (prev[running.label] ? prev : { ...prev, [running.label]: true }));
+    }
+  }, [steps]);
+
   if (!steps.length) return null;
   return (
-    <Card className="fade-in p-6">
+    <Card className="fade-in p-4 md:p-5">
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold text-white">{title}</h3>
+            <h3 className="text-base font-semibold text-white md:text-lg">{title}</h3>
             {running ? (
-              <span className="relative inline-block h-2 w-2 text-emerald-400 pulse-dot">
+              <span className="relative inline-block h-2 w-2 text-emerald-400">
                 <span className="absolute inset-0 rounded-full bg-emerald-400" />
+                <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/70" />
               </span>
             ) : null}
           </div>
-          <p className="mt-1 text-sm text-slate-400">
-            {subtitle ?? (running ? "Processando em segundo plano..." : "Últimas etapas executadas.")}
-          </p>
+          {subtitle ? <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p> : null}
         </div>
-        {running ? <Loader2 className="h-5 w-5 animate-spin text-emerald-300" aria-label="Em execução" /> : null}
+        {running ? <Loader2 className="h-4 w-4 animate-spin text-emerald-300" aria-label="Em execução" /> : null}
       </div>
 
-      <ol className="mt-6 space-y-1" role="list">
+      <ol className="mt-4 space-y-0" role="list">
         {steps.map((step, index) => {
           const isLast = index === steps.length - 1;
-          const statusLabel =
-            step.status === "running"
-              ? "Em andamento"
-              : step.status === "done"
-                ? "Concluído"
-                : step.status === "error"
-                  ? "Erro"
-                  : "Aguardando";
+          const stepLogs = logs[step.label] ?? [];
+          const isExpanded = expanded[step.label] ?? false;
 
           return (
-            <li
+            <StepItem
               key={step.label}
-              className="relative flex gap-4 py-3"
-              aria-label={`Etapa ${index + 1}: ${step.label}, ${statusLabel.toLowerCase()}`}
-            >
-              <div className="relative flex flex-col items-center">
-                <div
-                  className={cx(
-                    "relative z-10 grid h-10 w-10 place-items-center rounded-full border-2 transition",
-                    step.status === "done"
-                      ? "border-emerald-400 bg-emerald-400/20 text-emerald-200"
-                      : step.status === "running"
-                        ? "border-cyan-400 bg-cyan-400/20 text-cyan-100"
-                        : step.status === "error"
-                          ? "border-rose-400 bg-rose-400/20 text-rose-200"
-                          : "border-white/15 bg-white/5 text-slate-500"
-                  )}
-                  aria-hidden
-                >
-                  {step.status === "running" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : step.status === "done" ? (
-                    <CheckCircle2 className="h-5 w-5" />
-                  ) : step.status === "error" ? (
-                    <XCircle className="h-5 w-5" />
-                  ) : (
-                    <span className="text-sm font-semibold">{index + 1}</span>
-                  )}
-                </div>
-                {!isLast ? (
-                  <div
-                    className={cx(
-                      "w-0.5 flex-1",
-                      step.status === "done"
-                        ? "bg-gradient-to-b from-emerald-400 to-emerald-400/30"
-                        : "bg-white/10"
-                    )}
-                    aria-hidden
-                  />
-                ) : null}
-              </div>
-              <div className="flex-1 pb-1">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-base font-semibold text-white">{step.label}</span>
-                  <span
-                    className={cx(
-                      "text-xs font-semibold uppercase tracking-wide",
-                      step.status === "done"
-                        ? "text-emerald-300"
-                        : step.status === "running"
-                          ? "text-cyan-300"
-                          : step.status === "error"
-                            ? "text-rose-300"
-                            : "text-slate-500"
-                    )}
-                  >
-                    {statusLabel}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-slate-400">{step.message ?? "Aguardando."}</p>
-              </div>
-            </li>
+              step={step}
+              index={index}
+              isLast={isLast}
+              logs={stepLogs}
+              expanded={isExpanded}
+              onToggle={() => setExpanded((prev) => ({ ...prev, [step.label]: !isExpanded }))}
+            />
           );
         })}
       </ol>
@@ -457,37 +495,165 @@ function ProcessTracker({
   );
 }
 
+function StepItem({
+  step,
+  index,
+  isLast,
+  logs,
+  expanded,
+  onToggle
+}: {
+  step: StepState;
+  index: number;
+  isLast: boolean;
+  logs: LogLine[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const elapsed = useElapsed(step.startedAt, step.finishedAt);
+  const statusLabel =
+    step.status === "running"
+      ? "Em andamento"
+      : step.status === "done"
+        ? "Concluído"
+        : step.status === "error"
+          ? "Erro"
+          : "Aguardando";
+
+  const lastLine = logs.length ? logs[logs.length - 1].line : null;
+  const canToggle = logs.length > 0 || step.status === "running" || step.status === "error";
+
+  return (
+    <li
+      className="relative flex gap-3 py-2"
+      aria-label={`Etapa ${index + 1}: ${step.label}, ${statusLabel.toLowerCase()}`}
+    >
+      <div className="relative flex flex-col items-center">
+        <div
+          className={cx(
+            "relative z-10 grid h-8 w-8 place-items-center rounded-full border-2 transition",
+            step.status === "done"
+              ? "border-emerald-400 bg-emerald-400/20 text-emerald-200"
+              : step.status === "running"
+                ? "border-cyan-400 bg-cyan-400/20 text-cyan-100"
+                : step.status === "error"
+                  ? "border-rose-400 bg-rose-400/20 text-rose-200"
+                  : "border-white/15 bg-white/5 text-slate-500"
+          )}
+          aria-hidden
+        >
+          {step.status === "running" ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : step.status === "done" ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : step.status === "error" ? (
+            <XCircle className="h-4 w-4" />
+          ) : (
+            <span className="text-xs font-semibold">{index + 1}</span>
+          )}
+        </div>
+        {!isLast ? (
+          <div
+            className={cx(
+              "w-0.5 flex-1",
+              step.status === "done" ? "bg-gradient-to-b from-emerald-400 to-emerald-400/30" : "bg-white/10"
+            )}
+            aria-hidden
+          />
+        ) : null}
+      </div>
+      <div className="flex-1 pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold text-white">{step.label}</span>
+            {elapsed !== null ? (
+              <span
+                className={cx(
+                  "rounded-full border px-2 py-0.5 font-mono text-[10px]",
+                  step.status === "running"
+                    ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
+                    : "border-white/10 bg-white/5 text-slate-400"
+                )}
+              >
+                {formatDuration(elapsed)}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={cx(
+                "text-[10px] font-bold uppercase tracking-wide",
+                step.status === "done"
+                  ? "text-emerald-300"
+                  : step.status === "running"
+                    ? "text-cyan-300"
+                    : step.status === "error"
+                      ? "text-rose-300"
+                      : "text-slate-500"
+              )}
+            >
+              {statusLabel}
+            </span>
+            {canToggle ? (
+              <button
+                type="button"
+                onClick={onToggle}
+                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/10"
+                aria-expanded={expanded}
+                aria-label={expanded ? "Ocultar detalhes" : "Ver detalhes"}
+              >
+                <Terminal className="h-3 w-3" />
+                {expanded ? "Ocultar" : "Detalhes"}
+                {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {lastLine && !expanded ? (
+          <p className="mt-1 truncate font-mono text-[11px] text-slate-400" title={lastLine}>
+            ↳ {lastLine}
+          </p>
+        ) : step.message ? (
+          <p className="mt-1 text-xs text-slate-400">{step.message}</p>
+        ) : null}
+        {expanded ? (
+          <div className="mt-2">
+            <LogTerminal lines={logs} running={step.status === "running"} />
+          </div>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
 function DataFreshness({ snapshot }: { snapshot: Snapshot }) {
   const files = [
-    { label: "Base da Clínica", meta: snapshot.localFiles?.patientDb, icon: <Users className="h-4 w-4" /> },
-    { label: "Base do Kommo", meta: snapshot.localFiles?.kommoDb, icon: <Database className="h-4 w-4" /> },
-    { label: "Prévia pronta", meta: snapshot.localFiles?.safePayloads, icon: <ClipboardList className="h-4 w-4" /> }
+    { label: "Clínica", meta: snapshot.localFiles?.patientDb, icon: <Users className="h-3.5 w-3.5" /> },
+    { label: "Kommo", meta: snapshot.localFiles?.kommoDb, icon: <Database className="h-3.5 w-3.5" /> },
+    { label: "Prévia", meta: snapshot.localFiles?.safePayloads, icon: <ClipboardList className="h-3.5 w-3.5" /> }
   ] as const;
 
   return (
-    <div
-      className="grid grid-cols-1 gap-3 sm:grid-cols-3"
-      aria-label="Estado dos dados locais"
-    >
+    <div className="grid grid-cols-3 gap-2" aria-label="Estado dos dados locais">
       {files.map(({ label, meta, icon }) => {
         const exists = Boolean(meta?.exists);
         return (
           <div
             key={label}
-            className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 transition hover:border-white/20 hover:bg-white/[0.06]"
+            className="rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-white/20 hover:bg-white/[0.06]"
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
                 <span className="text-slate-300">{icon}</span>
                 {label}
               </div>
               {exists ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-300" aria-label="Disponível" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" aria-label="Disponível" />
               ) : (
-                <XCircle className="h-4 w-4 text-rose-300" aria-label="Indisponível" />
+                <XCircle className="h-3.5 w-3.5 text-rose-300" aria-label="Indisponível" />
               )}
             </div>
-            <p className="mt-2 text-xs text-slate-500">{timeAgo(meta?.modifiedUnix)}</p>
+            <p className="mt-1 text-[11px] text-slate-500">{timeAgo(meta?.modifiedUnix)}</p>
           </div>
         );
       })}
@@ -505,21 +671,21 @@ function SectionTitle({
   icon?: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start gap-3">
+    <div className="flex items-start gap-2.5">
       {icon ? (
-        <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.04] text-emerald-200">
+        <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-emerald-200">
           {icon}
         </div>
       ) : null}
       <div>
-        <h3 className="text-xl font-semibold text-white">{title}</h3>
-        {description ? <p className="mt-1 text-sm text-slate-400">{description}</p> : null}
+        <h3 className="text-base font-semibold text-white md:text-lg">{title}</h3>
+        {description ? <p className="mt-0.5 text-xs text-slate-400 md:text-sm">{description}</p> : null}
       </div>
     </div>
   );
 }
 
-function ActionCard({
+function ActionHero({
   title,
   summary,
   bullets,
@@ -553,49 +719,49 @@ function ActionCard({
   statusOk?: boolean | null;
 }) {
   return (
-    <Card className="hero-gradient shimmer-border p-8">
-      <div className="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
+    <Card className="hero-gradient shimmer-border p-5 md:p-6">
+      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
         <div className="max-w-2xl">
-          <Pill tone="ok" icon={<Sparkles className="h-3.5 w-3.5" />}>Principal</Pill>
-          <h2 className="mt-4 text-4xl font-bold leading-tight tracking-tight text-white">
+          <Pill tone="ok" icon={<Sparkles className="h-3 w-3" />}>Principal</Pill>
+          <h2 className="mt-3 text-2xl font-bold leading-tight tracking-tight text-white md:text-3xl">
             {title}
           </h2>
-          <p className="mt-3 text-base leading-7 text-slate-300">{summary}</p>
-          <ul className="mt-4 space-y-2" aria-label="O que a atualização faz">
+          <p className="mt-2 text-sm leading-6 text-slate-300">{summary}</p>
+          <ul className="mt-3 grid gap-1.5 sm:grid-cols-2" aria-label="O que a atualização faz">
             {bullets.map((bullet) => (
-              <li key={bullet} className="flex items-start gap-2 text-sm text-slate-300">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" aria-hidden />
+              <li key={bullet} className="flex items-start gap-1.5 text-xs text-slate-300">
+                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden />
                 <span>{bullet}</span>
               </li>
             ))}
           </ul>
         </div>
-        <div className="flex w-full shrink-0 flex-col gap-3 lg:w-auto">
+        <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
           <button
             type="button"
-            className="btn-primary inline-flex h-16 items-center justify-center gap-3 rounded-2xl px-8 text-base disabled:cursor-not-allowed"
+            className="btn-primary inline-flex h-12 items-center justify-center gap-2 rounded-xl px-6 text-sm disabled:cursor-not-allowed"
             onClick={onPrimary}
             disabled={primaryDisabled}
             aria-busy={primaryLoading}
           >
             {primaryLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin" aria-hidden />
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             ) : (
               <span aria-hidden>{primaryIcon}</span>
             )}
             <span>{primaryLabel}</span>
-            {!primaryLoading ? <ArrowRight className="h-5 w-5" aria-hidden /> : null}
+            {!primaryLoading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
           </button>
           {secondaryLabel && onSecondary ? (
             <button
               type="button"
-              className="btn-ghost inline-flex h-12 items-center justify-center gap-2 rounded-2xl px-5 text-sm font-semibold disabled:cursor-not-allowed"
+              className="btn-ghost inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-xs font-semibold disabled:cursor-not-allowed"
               onClick={onSecondary}
               disabled={secondaryDisabled}
               aria-busy={secondaryLoading}
             >
               {secondaryLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
                 <span aria-hidden>{secondaryIcon}</span>
               )}
@@ -610,7 +776,7 @@ function ActionCard({
           role="status"
           aria-live="polite"
           className={cx(
-            "fade-in mt-6 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm",
+            "fade-in mt-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
             statusOk === false
               ? "border-rose-400/40 bg-rose-500/10 text-rose-100"
               : statusOk === true
@@ -619,16 +785,71 @@ function ActionCard({
           )}
         >
           {statusOk === false ? (
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           ) : statusOk === true ? (
-            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           ) : (
-            <Info className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
           )}
-          <span className="leading-6">{statusMessage}</span>
+          <span className="leading-5">{statusMessage}</span>
         </div>
       ) : null}
     </Card>
+  );
+}
+
+function ApplyRibbon({
+  safeLeads,
+  safeRows,
+  onApply,
+  onDetails,
+  busy,
+  disabled
+}: {
+  safeLeads: number;
+  safeRows: number;
+  onApply: () => void;
+  onDetails: () => void;
+  busy: boolean;
+  disabled: boolean;
+}) {
+  if (safeRows <= 0) return null;
+  return (
+    <div className="fade-in sticky top-2 z-20 flex flex-col items-start gap-3 rounded-2xl border border-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-cyan-500/10 to-emerald-500/5 p-3 shadow-lg shadow-emerald-900/20 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:p-4">
+      <div className="flex items-center gap-3">
+        <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-400/20 text-emerald-200">
+          <Send className="h-4 w-4" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-white">
+            {number(safeRows)} atualizações prontas para enviar ao Kommo
+          </p>
+          <p className="text-xs text-slate-300">
+            {number(safeLeads)} clientes afetados · nada com pendência será enviado
+          </p>
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <button
+          type="button"
+          onClick={onDetails}
+          className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold"
+        >
+          <Info className="h-3.5 w-3.5" />
+          Detalhes
+        </button>
+        <button
+          type="button"
+          onClick={onApply}
+          disabled={busy || disabled}
+          className="btn-apply inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs disabled:cursor-not-allowed"
+          aria-busy={busy}
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          {busy ? "Enviando..." : "Aplicar no Kommo"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -639,10 +860,13 @@ function SyncPage({
   applyCommand,
   syncSteps,
   applySteps,
+  syncLogs,
+  applyLogs,
   onQuickUpdate,
   onFullUpdate,
   onApply,
-  onOpenReview
+  onOpenReview,
+  applyRef
 }: {
   snapshot: Snapshot;
   desktop: boolean;
@@ -650,10 +874,13 @@ function SyncPage({
   applyCommand: CommandState;
   syncSteps: StepState[];
   applySteps: StepState[];
+  syncLogs: Record<string, LogLine[]>;
+  applyLogs: Record<string, LogLine[]>;
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
   onApply: () => void;
   onOpenReview: () => void;
+  applyRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const summary = snapshot.previewSummary;
   const actions = summary?.action_counts ?? {};
@@ -666,23 +893,37 @@ function SyncPage({
   const quickRunning = command.running && command.task === "quick";
   const fullRunning = command.running && command.task === "full";
 
+  const scrollToApply = () => {
+    applyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
-    <div className="space-y-6">
-      <ActionCard
+    <div className="space-y-4">
+      <ApplyRibbon
+        safeLeads={safeLeads}
+        safeRows={safeRows}
+        onApply={onApply}
+        onDetails={scrollToApply}
+        busy={applyCommand.running}
+        disabled={command.running || !desktop}
+      />
+
+      <ActionHero
         title="Atualizar os dados do Kommo"
-        summary="A atualização rápida é ideal para o dia a dia e leva poucos minutos. A completa reprocessa tudo desde o início — use apenas quando precisar revisar toda a base."
+        summary="Atualização rápida é ideal para o dia a dia (poucos minutos). A completa reprocessa tudo desde o início."
         bullets={[
-          "Busca os atendimentos mais recentes da clínica",
+          "Busca os atendimentos recentes da clínica",
           "Cruza pacientes com leads do Kommo",
-          "Deixa pronto o que pode ser enviado com segurança"
+          "Calcula o que pode ir com segurança",
+          "Gera prévia para você conferir"
         ]}
         primaryLabel={quickRunning ? "Atualizando..." : "Atualização rápida"}
-        primaryIcon={<Zap className="h-5 w-5" />}
+        primaryIcon={<Zap className="h-4 w-4" />}
         onPrimary={onQuickUpdate}
         primaryDisabled={command.running}
         primaryLoading={quickRunning}
         secondaryLabel={fullRunning ? "Processando tudo..." : "Atualização completa"}
-        secondaryIcon={<RefreshCw className="h-4 w-4" />}
+        secondaryIcon={<RefreshCw className="h-3.5 w-3.5" />}
         onSecondary={onFullUpdate}
         secondaryDisabled={command.running}
         secondaryLoading={fullRunning}
@@ -690,77 +931,94 @@ function SyncPage({
         statusOk={command.ok}
       />
 
-      <section aria-label="Resumo da última atualização" className="grid grid-cols-1 gap-4 md:grid-cols-3">
+      {syncSteps.length ? (
+        <ProcessTracker
+          title="Andamento da atualização"
+          subtitle={
+            command.running
+              ? "Aguarde — o app mostra o que cada etapa está fazendo em tempo real."
+              : command.ok === true
+                ? "Atualização finalizada com sucesso."
+                : command.ok === false
+                  ? "Houve um problema. Expanda a etapa com erro para ver o log."
+                  : "Últimas etapas executadas."
+          }
+          steps={syncSteps}
+          running={command.running}
+          logs={syncLogs}
+        />
+      ) : null}
+
+      <section aria-label="Resumo da última atualização" className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <StatTile
           label="Clientes prontos"
           value={safeLeads}
-          help="leads do Kommo que podem receber atualização automática com segurança"
+          help="receberão atualização com segurança"
           tone="ok"
-          icon={<Users className="h-4 w-4" />}
+          icon={<Users className="h-3.5 w-3.5" />}
         />
         <StatTile
           label="Campos a enviar"
           value={safeRows}
-          help="quantidade de campos preparados para ir ao Kommo"
+          help="atualizações preparadas para o Kommo"
           tone="info"
-          icon={<Database className="h-4 w-4" />}
+          icon={<Database className="h-3.5 w-3.5" />}
         />
         <StatTile
           label="Para revisar"
           value={reviewRows}
-          help="itens que precisam da sua decisão antes de enviar"
+          help="precisam da sua decisão"
           tone="warn"
-          icon={<AlertTriangle className="h-4 w-4" />}
+          icon={<AlertTriangle className="h-3.5 w-3.5" />}
         />
       </section>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_1fr]">
-        <Card className="p-6">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_1fr]">
+        <Card className="p-4 md:p-5">
           <SectionTitle
             title="O que será enviado"
             description="Resumo do que está preparado para aplicar no Kommo."
-            icon={<ClipboardList className="h-4 w-4" />}
+            icon={<ClipboardList className="h-3.5 w-3.5" />}
           />
-          <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
             {[
-              ["Preencher campos vazios", "fill_empty", "Campos sem valor no Kommo serão preenchidos"],
-              ["Aumentar valores", "update_if_greater", "Quando o valor da clínica é maior que o do Kommo"],
-              ["Atualizar datas", "update_if_newer", "Datas mais recentes substituem antigas"],
-              ["Adicionar serviços", "merge", "Novos serviços somados à lista existente"]
-            ].map(([label, key, help]) => (
+              ["Preencher vazios", "fill_empty"],
+              ["Aumentar valores", "update_if_greater"],
+              ["Datas mais novas", "update_if_newer"],
+              ["Somar serviços", "merge"]
+            ].map(([label, key]) => (
               <div
                 key={label}
-                className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 transition hover:border-white/20 hover:bg-white/[0.06]"
+                className="rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-white/20 hover:bg-white/[0.06]"
               >
-                <p className="text-sm font-medium text-slate-400">{label}</p>
-                <p className="mt-1.5 text-3xl font-bold text-white">
+                <p className="text-[11px] font-medium text-slate-400">{label}</p>
+                <p className="mt-1 text-2xl font-bold text-white">
                   {number(actions[key as keyof typeof actions])}
                 </p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">{help}</p>
               </div>
             ))}
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-4 md:p-5">
           <SectionTitle
             title="Estado dos dados"
-            description="Verifique se as bases estão recentes antes de aplicar."
-            icon={<Database className="h-4 w-4" />}
+            description="Confira se as bases estão recentes."
+            icon={<Database className="h-3.5 w-3.5" />}
           />
-          <div className="mt-6">
+          <div className="mt-4">
             <DataFreshness snapshot={snapshot} />
           </div>
 
-          <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-slate-300">
+          <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
             <div className="flex items-start gap-2">
-              <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" aria-hidden />
+              <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
               <div>
                 <p className="font-semibold text-white">
                   {number(patientCount)} pacientes · {number(leadCount)} leads
                 </p>
-                <p className="mt-1 text-xs leading-5 text-slate-400">
-                  Dados carregados na última prévia. Rode uma atualização para trazer novidades.
+                <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
+                  Dados da última prévia. Rode uma atualização para trazer novidades.
                 </p>
               </div>
             </div>
@@ -768,65 +1026,45 @@ function SyncPage({
         </Card>
       </div>
 
-      {syncSteps.length ? (
-        <ProcessTracker
-          title="Andamento da atualização"
-          subtitle={
-            command.running
-              ? "Aguarde alguns instantes. Você pode manter o app aberto."
-              : command.ok === true
-                ? "Atualização finalizada com sucesso."
-                : command.ok === false
-                  ? "Houve um problema. Veja os detalhes abaixo."
-                  : undefined
-          }
-          steps={syncSteps}
-          running={command.running}
-        />
-      ) : null}
-
-      <Card className="p-6">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+      <Card className="p-4 md:p-5" ref={applyRef as unknown as React.RefObject<HTMLElement>}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
-            <Pill tone="warn" icon={<Send className="h-3.5 w-3.5" />}>
-              Envio ao Kommo
-            </Pill>
-            <h3 className="mt-3 text-2xl font-semibold text-white">
-              Aplicar atualizações seguras
-            </h3>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              Este passo envia ao Kommo apenas o que foi validado como seguro pela prévia.
-              Itens em <strong className="font-semibold text-amber-200">Pendências</strong> não são enviados — eles esperam sua decisão.
+            <Pill tone="warn" icon={<Send className="h-3 w-3" />}>Envio ao Kommo</Pill>
+            <h3 className="mt-2 text-xl font-semibold text-white">Aplicar atualizações seguras</h3>
+            <p className="mt-1 text-xs leading-5 text-slate-300 md:text-sm">
+              Envia ao Kommo apenas o que foi validado como seguro pela prévia. Itens em
+              <strong className="mx-1 font-semibold text-amber-200">Pendências</strong>
+              nunca são enviados.
             </p>
             {reviewRows > 0 ? (
               <button
                 type="button"
                 onClick={onOpenReview}
-                className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-cyan-300 underline-offset-4 hover:underline"
+                className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-300 underline-offset-4 hover:underline"
               >
-                <AlertTriangle className="h-4 w-4" />
+                <AlertTriangle className="h-3.5 w-3.5" />
                 Ver {number(reviewRows)} pendências antes de aplicar
               </button>
             ) : null}
           </div>
           <button
             type="button"
-            className="btn-apply inline-flex h-14 shrink-0 items-center justify-center gap-3 rounded-2xl px-6 text-sm disabled:cursor-not-allowed"
+            className="btn-apply inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-xs disabled:cursor-not-allowed"
             onClick={onApply}
-            disabled={applyCommand.running || command.running || !desktop}
+            disabled={applyCommand.running || command.running || !desktop || safeRows <= 0}
             aria-busy={applyCommand.running}
           >
             {applyCommand.running ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
             ) : (
-              <Send className="h-4 w-4" aria-hidden />
+              <Send className="h-3.5 w-3.5" aria-hidden />
             )}
             {applyCommand.running ? "Enviando..." : "Aplicar no Kommo"}
           </button>
         </div>
         {!desktop ? (
-          <div className="mt-4 flex items-start gap-2 rounded-2xl border border-amber-400/40 bg-amber-500/10 p-3 text-sm text-amber-100">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 p-2.5 text-xs text-amber-100">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <span>O envio só é habilitado quando o app está conectado ao ambiente local.</span>
           </div>
         ) : null}
@@ -835,7 +1073,7 @@ function SyncPage({
             role="status"
             aria-live="polite"
             className={cx(
-              "fade-in mt-4 flex items-start gap-3 rounded-2xl border px-4 py-3 text-sm",
+              "fade-in mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
               applyCommand.ok === false
                 ? "border-rose-400/40 bg-rose-500/10 text-rose-100"
                 : applyCommand.ok === true
@@ -844,19 +1082,24 @@ function SyncPage({
             )}
           >
             {applyCommand.ok === false ? (
-              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             ) : applyCommand.ok === true ? (
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             ) : (
-              <Loader2 className="mt-0.5 h-5 w-5 shrink-0 animate-spin" aria-hidden />
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
             )}
-            <span className="leading-6">{applyCommand.message}</span>
+            <span className="leading-5">{applyCommand.message}</span>
           </div>
         ) : null}
 
         {applySteps.length ? (
-          <div className="mt-5">
-            <ProcessTracker title="Andamento da aplicação" steps={applySteps} running={applyCommand.running} />
+          <div className="mt-4">
+            <ProcessTracker
+              title="Andamento da aplicação"
+              steps={applySteps}
+              running={applyCommand.running}
+              logs={applyLogs}
+            />
           </div>
         ) : null}
       </Card>
@@ -868,47 +1111,67 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   const stats = snapshot.previewSummary?.field_stats ?? {};
   const service = stats.service;
   const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
+  const [query, setQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((row) =>
+      [row.patient_name, row.lead_name, row.field_label, row.candidate_value, row.mapped_value]
+        .filter(Boolean)
+        .some((value) => value.toLowerCase().includes(term))
+    );
+  }, [rows, query]);
 
   return (
-    <div className="space-y-6">
-      <Card className="hero-gradient p-8">
-        <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+    <div className="space-y-4">
+      <Card className="hero-gradient p-5 md:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-2xl">
-            <Pill tone="warn" icon={<AlertTriangle className="h-3.5 w-3.5" />}>
-              Revisão humana
-            </Pill>
-            <h2 className="mt-4 text-4xl font-bold tracking-tight text-white">Pendências</h2>
-            <p className="mt-3 text-base leading-7 text-slate-300">
-              Estes itens <strong className="text-white">não serão enviados automaticamente</strong> ao Kommo.
-              Confira cada sugestão e decida se quer corrigir o mapeamento ou deixar o item fora da automação.
+            <Pill tone="warn" icon={<AlertTriangle className="h-3 w-3" />}>Revisão humana</Pill>
+            <h2 className="mt-3 text-2xl font-bold tracking-tight text-white md:text-3xl">Pendências</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Estes itens <strong className="text-white">não vão ao Kommo automaticamente</strong>. Confira cada sugestão e decida se ajusta o mapeamento ou deixa o item fora.
             </p>
           </div>
-          <div className="surface-raised rounded-3xl border border-amber-400/30 px-7 py-5 text-center">
-            <p className="text-5xl font-bold text-amber-100">{number(reviewRows)}</p>
-            <p className="mt-1 text-sm font-medium text-amber-200">aguardando revisão</p>
+          <div className="surface-raised rounded-2xl border border-amber-400/30 px-5 py-3 text-center">
+            <p className="text-3xl font-bold text-amber-100 md:text-4xl">{number(reviewRows)}</p>
+            <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-200">aguardando revisão</p>
           </div>
         </div>
       </Card>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
-        <Card className="p-6">
-          <SectionTitle
-            title="Itens para revisar"
-            description="Compare o valor vindo da clínica com a sugestão de mapeamento."
-            icon={<ClipboardList className="h-4 w-4" />}
-          />
-          <div className="thin-scrollbar mt-5 max-h-[560px] overflow-auto rounded-2xl border border-white/10">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-              <thead className="sticky top-0 bg-slate-900/95 text-xs uppercase tracking-wide text-slate-400 backdrop-blur">
+      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_300px]">
+        <Card className="p-4 md:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <SectionTitle
+              title="Itens para revisar"
+              description="Compare o valor da clínica com a sugestão de mapeamento."
+              icon={<ClipboardList className="h-3.5 w-3.5" />}
+            />
+            <div className="relative">
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Filtrar cliente ou campo..."
+                className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-400/40 focus:outline-none focus:ring-2 focus:ring-emerald-400/30 sm:w-64"
+                aria-label="Filtrar pendências"
+              />
+            </div>
+          </div>
+          <div className="thin-scrollbar mt-4 max-h-[480px] overflow-auto rounded-xl border border-white/10">
+            <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+              <thead className="sticky top-0 z-10 bg-slate-900/95 text-[10px] uppercase tracking-wide text-slate-400 backdrop-blur">
                 <tr>
-                  <th className="px-4 py-3 font-semibold">Cliente</th>
-                  <th className="px-4 py-3 font-semibold">Campo</th>
-                  <th className="px-4 py-3 font-semibold">Valor da clínica</th>
-                  <th className="px-4 py-3 font-semibold">Sugestão</th>
+                  <th className="px-3 py-2 font-semibold">Cliente</th>
+                  <th className="px-3 py-2 font-semibold">Campo</th>
+                  <th className="px-3 py-2 font-semibold">Valor da clínica</th>
+                  <th className="px-3 py-2 font-semibold">Sugestão</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {rows.slice(0, 80).map((row, index) => (
+                {filtered.slice(0, 120).map((row, index) => (
                   <tr
                     key={`${row.patient_name}-${row.field_label}-${index}`}
                     className={cx(
@@ -916,17 +1179,17 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                       index % 2 === 0 ? "bg-white/[0.02]" : "bg-transparent"
                     )}
                   >
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-2">
                       <p className="font-semibold text-white">{row.patient_name || row.lead_name}</p>
                       {row.lead_name && row.lead_name !== row.patient_name ? (
-                        <p className="mt-1 text-xs text-slate-500">lead: {row.lead_name}</p>
+                        <p className="mt-0.5 text-[10px] text-slate-500">lead: {row.lead_name}</p>
                       ) : null}
                     </td>
-                    <td className="px-4 py-3 font-medium text-slate-200">{row.field_label}</td>
-                    <td className="max-w-[260px] px-4 py-3 text-slate-300">
+                    <td className="px-3 py-2 font-medium text-slate-200">{row.field_label}</td>
+                    <td className="max-w-[240px] px-3 py-2 text-slate-300">
                       <span className="line-clamp-2">{row.candidate_value}</span>
                     </td>
-                    <td className="max-w-[220px] px-4 py-3 text-slate-300">
+                    <td className="max-w-[200px] px-3 py-2 text-slate-300">
                       {row.mapped_value ? (
                         <span className="line-clamp-2">{row.mapped_value}</span>
                       ) : (
@@ -935,13 +1198,23 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                     </td>
                   </tr>
                 ))}
-                {!rows.length ? (
+                {!filtered.length ? (
                   <tr>
-                    <td className="px-4 py-12 text-center text-slate-400" colSpan={4}>
-                      <div className="flex flex-col items-center gap-3">
-                        <CheckCircle2 className="h-10 w-10 text-emerald-400/70" aria-hidden />
-                        <p className="text-base font-semibold text-white">Nada para revisar</p>
-                        <p className="text-sm text-slate-400">Toda a base está com mapeamentos automáticos.</p>
+                    <td className="px-3 py-8 text-center text-slate-400" colSpan={4}>
+                      <div className="flex flex-col items-center gap-2">
+                        {rows.length ? (
+                          <>
+                            <Info className="h-7 w-7 text-cyan-400/70" aria-hidden />
+                            <p className="text-sm font-semibold text-white">Nada encontrado</p>
+                            <p className="text-xs text-slate-400">Tente outro termo no filtro.</p>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-7 w-7 text-emerald-400/70" aria-hidden />
+                            <p className="text-sm font-semibold text-white">Nada para revisar</p>
+                            <p className="text-xs text-slate-400">Toda a base está com mapeamentos automáticos.</p>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -949,54 +1222,56 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
               </tbody>
             </table>
           </div>
+          <p className="mt-2 text-[11px] text-slate-500">
+            Mostrando {Math.min(filtered.length, 120)} de {rows.length} itens.
+          </p>
 
-          <div className="mt-5 flex items-start gap-2 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-sm text-cyan-100">
-            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            <p className="leading-6">
-              Para resolver uma pendência, ajuste o mapeamento do serviço nas planilhas da pasta
-              <code className="mx-1 rounded bg-black/40 px-1.5 py-0.5 font-mono text-xs">mappings/</code>
-              ou deixe o item fora da automação. Nada nesta tela vai ao Kommo automaticamente.
+          <div className="mt-3 flex items-start gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <p className="leading-5">
+              Para resolver uma pendência, ajuste o mapeamento nas planilhas da pasta
+              <code className="mx-1 rounded bg-black/40 px-1.5 py-0.5 font-mono text-[10px]">mappings/</code>
+              ou deixe o item fora da automação.
             </p>
           </div>
         </Card>
 
-        <Card className="p-6">
+        <Card className="p-4 md:p-5">
           <SectionTitle
             title="Resumo de serviços"
             description="Números que compõem as pendências."
-            icon={<Info className="h-4 w-4" />}
+            icon={<Info className="h-3.5 w-3.5" />}
           />
-          <dl className="mt-5 space-y-4">
-            <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4">
-              <dt className="text-sm font-medium text-emerald-200">Serviços seguros</dt>
-              <dd className="mt-1 text-3xl font-bold text-white">{number(service?.safe_fill)}</dd>
+          <dl className="mt-4 space-y-2.5">
+            <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3">
+              <dt className="text-xs font-medium text-emerald-200">Serviços seguros</dt>
+              <dd className="mt-0.5 text-2xl font-bold text-white">{number(service?.safe_fill)}</dd>
             </div>
-            <div className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4">
-              <dt className="text-sm font-medium text-amber-100">Em revisão</dt>
-              <dd className="mt-1 text-3xl font-bold text-amber-50">{number(service?.review_fill)}</dd>
+            <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3">
+              <dt className="text-xs font-medium text-amber-100">Em revisão</dt>
+              <dd className="mt-0.5 text-2xl font-bold text-amber-50">{number(service?.review_fill)}</dd>
             </div>
-            <div className="rounded-2xl border border-rose-400/30 bg-rose-400/10 p-4">
-              <dt className="text-sm font-medium text-rose-100">Sem mapeamento</dt>
-              <dd className="mt-1 text-3xl font-bold text-rose-50">{number(service?.unmapped)}</dd>
+            <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3">
+              <dt className="text-xs font-medium text-rose-100">Sem mapeamento</dt>
+              <dd className="mt-0.5 text-2xl font-bold text-rose-50">{number(service?.unmapped)}</dd>
             </div>
           </dl>
         </Card>
       </section>
 
-      <Card className="p-6">
+      <Card className="p-4 md:p-5">
         <SectionTitle
           title="Campos que seguem manuais"
-          description="Estes campos nunca entram na automação recorrente. Continue tratando-os diretamente no Kommo."
-          icon={<Info className="h-4 w-4" />}
+          description="Nunca entram na automação recorrente — trate-os diretamente no Kommo."
+          icon={<Info className="h-3.5 w-3.5" />}
         />
-        <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {["Retorno", "Consultor", "Atendido por", "Pagamento / link", "Forma de resgate"].map((item) => (
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
+          {["Retorno", "Consultor", "Atendido por", "Pagamento", "Forma de resgate"].map((item) => (
             <div
               key={item}
-              className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 transition hover:border-white/20 hover:bg-white/[0.06]"
+              className="rounded-xl border border-white/10 bg-white/[0.035] p-3 text-center transition hover:border-white/20 hover:bg-white/[0.06]"
             >
-              <p className="font-semibold text-white">{item}</p>
-              <p className="mt-2 text-sm leading-5 text-slate-400">Sem regra segura para automação recorrente.</p>
+              <p className="text-xs font-semibold text-white">{item}</p>
             </div>
           ))}
         </div>
@@ -1005,18 +1280,40 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   );
 }
 
+function loadInitialPage(): Page {
+  try {
+    const stored = window.localStorage.getItem(PAGE_STORAGE_KEY);
+    if (stored === "sync" || stored === "review") return stored;
+  } catch {
+    // ignore
+  }
+  return "sync";
+}
+
 export default function App() {
   const { snapshot, desktop, refresh } = useSnapshot();
   const review = useReviewRows();
-  const [page, setPage] = useState<Page>("sync");
+  const [page, setPage] = useState<Page>(loadInitialPage);
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [syncSteps, setSyncSteps] = useState<StepState[]>([]);
   const [applySteps, setApplySteps] = useState<StepState[]>([]);
+  const [syncLogs, setSyncLogs] = useState<Record<string, LogLine[]>>({});
+  const [applyLogs, setApplyLogs] = useState<Record<string, LogLine[]>>({});
+  const applyCardRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PAGE_STORAGE_KEY, page);
+    } catch {
+      // ignore
+    }
+  }, [page]);
 
   useEffect(() => {
     let disposed = false;
-    let unlisten: (() => void) | undefined;
+    const unsubs: Array<() => void> = [];
+
     void listen<ProgressEvent>("process-progress", (event) => {
       if (disposed) return;
       const payload = event.payload;
@@ -1030,18 +1327,54 @@ export default function App() {
             : payload.status === "completed" || payload.status === "done"
               ? "done"
               : "error";
+        const now = Date.now();
         if (index >= 0) {
-          next[index] = { ...next[index], status, message: payload.message };
+          const base = next[index];
+          next[index] = {
+            ...base,
+            status,
+            message: payload.message,
+            startedAt:
+              status === "running" ? base.startedAt ?? now : base.startedAt,
+            finishedAt:
+              status === "done" || status === "error" ? now : base.finishedAt
+          };
           return next;
         }
-        return [...next, { label: payload.step, status, message: payload.message }];
+        return [
+          ...next,
+          {
+            label: payload.step,
+            status,
+            message: payload.message,
+            startedAt: status === "running" ? now : undefined,
+            finishedAt: status === "done" || status === "error" ? now : undefined
+          }
+        ];
       });
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unsubs.push(fn);
     });
+
+    void listen<LogEvent>("process-log", (event) => {
+      if (disposed) return;
+      const payload = event.payload;
+      const setLogs = payload.flow === "apply" ? setApplyLogs : setSyncLogs;
+      setLogs((prev) => {
+        const existing = prev[payload.step] ?? [];
+        const appended = [...existing, { stream: payload.stream, line: payload.line, tsMs: payload.tsMs }];
+        const trimmed = appended.length > LOG_BUFFER_SIZE ? appended.slice(-LOG_BUFFER_SIZE) : appended;
+        return { ...prev, [payload.step]: trimmed };
+      });
+    }).then((fn) => {
+      if (disposed) fn();
+      else unsubs.push(fn);
+    });
+
     return () => {
       disposed = true;
-      unlisten?.();
+      unsubs.forEach((fn) => fn());
     };
   }, []);
 
@@ -1050,85 +1383,120 @@ export default function App() {
   }
 
   async function runSyncTask(task: SyncTask) {
+    if (command.running) return;
     const labels: Record<SyncTask, string> = {
       quick: "Atualização rápida em andamento. Pode levar alguns minutos.",
-      full: "Atualização completa em andamento. Isso pode levar vários minutos.",
+      full: "Atualização completa em andamento. Pode levar vários minutos.",
       clinic: "Atualizando dados da clínica...",
       operational: "Atualizando agenda, serviços e origem...",
       kommo: "Atualizando dados do Kommo...",
       preview: "Gerando nova prévia...",
-      all: "Atualizando tudo. Isso pode levar alguns minutos."
+      all: "Atualizando tudo. Pode levar alguns minutos."
     };
     setSyncSteps(createStepState(task));
-    setCommand({ running: true, message: labels[task], ok: null, task });
+    setSyncLogs({});
+    setCommand({
+      running: true,
+      message: labels[task],
+      ok: null,
+      task,
+      startedAt: Date.now()
+    });
     try {
       const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("run_sync_task", { task });
       const done = result.logs.map((item) => item.label).join(" → ");
-      setCommand({ running: false, message: `Concluído: ${done}`, ok: true, task });
+      setCommand({
+        running: false,
+        message: `Concluído: ${done}`,
+        ok: true,
+        task,
+        finishedAt: Date.now()
+      });
       await refresh();
       await review.refresh();
     } catch (error) {
-      setCommand({ running: false, message: String(error), ok: false, task });
+      setCommand({
+        running: false,
+        message: String(error),
+        ok: false,
+        task,
+        finishedAt: Date.now()
+      });
     }
   }
 
   async function applySafePayloads() {
+    if (applyCommand.running || command.running) return;
     const confirmed = window.confirm(
       "Aplicar no Kommo somente as atualizações seguras? As pendências não serão enviadas."
     );
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
     setApplySteps(createStepState("apply"));
-    setApplyCommand({ running: true, message: "Enviando atualizações seguras para o Kommo...", ok: null });
+    setApplyLogs({});
+    setApplyCommand({
+      running: true,
+      message: "Enviando atualizações seguras para o Kommo...",
+      ok: null,
+      startedAt: Date.now()
+    });
     try {
       const result = await call<{ logs: Array<{ label: string }>; snapshot: Snapshot }>("apply_safe_payloads");
       const done = result.logs.map((item) => item.label).join(" → ");
-      setApplyCommand({ running: false, message: `Concluído: ${done}`, ok: true });
+      setApplyCommand({
+        running: false,
+        message: `Concluído: ${done}`,
+        ok: true,
+        finishedAt: Date.now()
+      });
       await refresh();
       await review.refresh();
     } catch (error) {
-      setApplyCommand({ running: false, message: String(error), ok: false });
+      setApplyCommand({
+        running: false,
+        message: String(error),
+        ok: false,
+        finishedAt: Date.now()
+      });
     }
   }
 
   const safeRows = snapshot.previewSummary?.safe_field_row_count ?? snapshot.safeRowsCount ?? 0;
   const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
-  const subtitle = useMemo(
-    () => `${number(safeRows)} campos prontos · ${number(reviewRows)} para revisar`,
-    [reviewRows, safeRows]
-  );
+  const anyRunning = command.running || applyCommand.running;
+
+  const subtitle = useMemo(() => {
+    if (anyRunning) return "Processando em segundo plano...";
+    return `${number(safeRows)} campos prontos · ${number(reviewRows)} para revisar`;
+  }, [anyRunning, safeRows, reviewRows]);
 
   return (
     <div className="app-shell text-slate-100">
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:py-8">
-        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
+      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 px-3 py-4 sm:px-5 lg:py-6">
+        <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
             <div
-              className="relative grid h-14 w-14 shrink-0 place-items-center rounded-2xl text-slate-950 shadow-lg shadow-emerald-500/30"
-              style={{
-                background: "linear-gradient(135deg, #34d399 0%, #22d3ee 100%)"
-              }}
+              className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-950 shadow-lg shadow-emerald-500/30"
+              style={{ background: "linear-gradient(135deg, #34d399 0%, #22d3ee 100%)" }}
               aria-hidden
             >
-              <Sparkles className="h-7 w-7" />
+              <Sparkles className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-emerald-300">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
                 Mirella Sync
               </p>
-              <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              <h1 className="text-xl font-bold tracking-tight text-white md:text-2xl">
                 Atualização do Kommo
               </h1>
-              <p className="mt-0.5 text-sm text-slate-400">{subtitle}</p>
+              <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div
               className={cx(
-                "hidden items-center gap-2 rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-wide md:inline-flex",
+                "hidden items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide md:inline-flex",
                 desktop
                   ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
                   : "border-amber-400/30 bg-amber-400/10 text-amber-200"
@@ -1137,7 +1505,7 @@ export default function App() {
             >
               {desktop ? (
                 <>
-                  <span className="relative inline-block h-2 w-2">
+                  <span className="relative inline-block h-1.5 w-1.5">
                     <span className="absolute inset-0 rounded-full bg-emerald-400" />
                     <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/60" />
                   </span>
@@ -1145,46 +1513,55 @@ export default function App() {
                 </>
               ) : (
                 <>
-                  <AlertTriangle className="h-3.5 w-3.5" />
+                  <AlertTriangle className="h-3 w-3" />
                   Modo prévia
                 </>
               )}
             </div>
+            {anyRunning ? (
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-cyan-200">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processando
+              </div>
+            ) : null}
             <nav
-              className="flex items-center gap-1 rounded-2xl border border-white/10 bg-white/[0.04] p-1"
+              className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1"
               aria-label="Navegação principal"
             >
               <button
                 type="button"
                 onClick={() => setPage("sync")}
                 className={cx(
-                  "inline-flex h-11 items-center gap-2 rounded-xl px-4 text-sm font-semibold transition",
+                  "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
                   page === "sync"
-                    ? "bg-white text-slate-950 shadow-md"
+                    ? "bg-white text-slate-950 shadow"
                     : "text-slate-300 hover:bg-white/10 hover:text-white"
                 )}
                 aria-current={page === "sync" ? "page" : undefined}
               >
-                <Zap className="h-4 w-4" aria-hidden />
+                <Zap className="h-3.5 w-3.5" aria-hidden />
                 Rotina
+                {command.running ? (
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+                ) : null}
               </button>
               <button
                 type="button"
                 onClick={() => setPage("review")}
                 className={cx(
-                  "relative inline-flex h-11 items-center gap-2 rounded-xl px-4 text-sm font-semibold transition",
+                  "relative inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
                   page === "review"
-                    ? "bg-white text-slate-950 shadow-md"
+                    ? "bg-white text-slate-950 shadow"
                     : "text-slate-300 hover:bg-white/10 hover:text-white"
                 )}
                 aria-current={page === "review" ? "page" : undefined}
               >
-                <AlertTriangle className="h-4 w-4" aria-hidden />
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
                 Pendências
                 {reviewRows > 0 ? (
                   <span
                     className={cx(
-                      "ml-1 inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 text-xs font-bold",
+                      "ml-0.5 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
                       page === "review" ? "bg-amber-400 text-slate-950" : "bg-amber-400/20 text-amber-200"
                     )}
                     aria-label={`${reviewRows} pendências`}
@@ -1206,20 +1583,23 @@ export default function App() {
               applyCommand={applyCommand}
               syncSteps={syncSteps}
               applySteps={applySteps}
+              syncLogs={syncLogs}
+              applyLogs={applyLogs}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
               onApply={applySafePayloads}
               onOpenReview={() => setPage("review")}
+              applyRef={applyCardRef}
             />
           ) : (
             <ReviewPage snapshot={snapshot} rows={review.rows} />
           )}
         </main>
 
-        <footer className="mt-2 flex flex-col items-center justify-between gap-2 border-t border-white/5 pt-4 text-xs text-slate-500 sm:flex-row">
+        <footer className="mt-1 flex flex-col items-center justify-between gap-1 border-t border-white/5 pt-3 text-[10px] text-slate-500 sm:flex-row">
           <p>Mirella Kommo Sync · dados processados localmente no seu computador</p>
-          <p className="flex items-center gap-1.5">
-            <Clock3 className="h-3 w-3" aria-hidden />
+          <p className="flex items-center gap-1">
+            <Clock3 className="h-2.5 w-2.5" aria-hidden />
             Última prévia: {timeAgo(snapshot.localFiles?.safePayloads?.modifiedUnix)}
           </p>
         </footer>

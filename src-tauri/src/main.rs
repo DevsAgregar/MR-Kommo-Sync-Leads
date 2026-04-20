@@ -4,8 +4,11 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
     fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Runtime};
 #[cfg(target_os = "windows")]
@@ -64,6 +67,42 @@ struct ProgressPayload {
     step: String,
     status: String,
     message: String,
+}
+
+#[derive(Clone, Serialize)]
+struct LogPayload {
+    flow: String,
+    step: String,
+    stream: String,
+    line: String,
+    #[serde(rename = "tsMs")]
+    ts_ms: u128,
+}
+
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn emit_log<R: Runtime>(
+    handle: &AppHandle<R>,
+    flow: &str,
+    step: &str,
+    stream: &str,
+    line: &str,
+) {
+    let _ = handle.emit(
+        "process-log",
+        LogPayload {
+            flow: flow.to_string(),
+            step: step.to_string(),
+            stream: stream.to_string(),
+            line: line.to_string(),
+            ts_ms: now_ms(),
+        },
+    );
 }
 
 fn dev_repo_root() -> Result<PathBuf, String> {
@@ -193,6 +232,8 @@ fn run_backend_command<R: Runtime>(
     executable_name: &str,
     script_name: &str,
     args: &[&str],
+    flow: &str,
+    step: &str,
 ) -> Result<String, String> {
     let runtime_dir = ensure_runtime_seeded(handle)?;
     if !runtime_dir.exists() {
@@ -216,17 +257,74 @@ fn run_backend_command<R: Runtime>(
     command
         .args(args)
         .current_dir(&runtime_dir)
-        .env("MIRELLA_RUNTIME_ROOT", &runtime_dir);
+        .env("MIRELLA_RUNTIME_ROOT", &runtime_dir)
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONIOENCODING", "utf-8")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
 
-    let output = command.output().map_err(|error| error.to_string())?;
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    if output.status.success() {
-        Ok(stdout)
+    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout_pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Falha ao abrir stdout".to_string())?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Falha ao abrir stderr".to_string())?;
+
+    let stdout_handle = handle.clone();
+    let stdout_flow = flow.to_string();
+    let stdout_step = step.to_string();
+    let stdout_reader = thread::spawn(move || {
+        let reader = BufReader::new(stdout_pipe);
+        let mut collected = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    emit_log(&stdout_handle, &stdout_flow, &stdout_step, "stdout", &text);
+                    collected.push_str(&text);
+                    collected.push('\n');
+                }
+                Err(_) => break,
+            }
+        }
+        collected
+    });
+
+    let stderr_handle = handle.clone();
+    let stderr_flow = flow.to_string();
+    let stderr_step = step.to_string();
+    let stderr_reader = thread::spawn(move || {
+        let reader = BufReader::new(stderr_pipe);
+        let mut collected = String::new();
+        for line in reader.lines() {
+            match line {
+                Ok(text) => {
+                    emit_log(&stderr_handle, &stderr_flow, &stderr_step, "stderr", &text);
+                    collected.push_str(&text);
+                    collected.push('\n');
+                }
+                Err(_) => break,
+            }
+        }
+        collected
+    });
+
+    let status = child.wait().map_err(|error| error.to_string())?;
+    let stdout_text = stdout_reader.join().unwrap_or_default();
+    let stderr_text = stderr_reader.join().unwrap_or_default();
+
+    if status.success() {
+        Ok(stdout_text)
     } else {
-        Err(if stderr.trim().is_empty() { stdout } else { stderr })
+        Err(if stderr_text.trim().is_empty() {
+            stdout_text
+        } else {
+            stderr_text
+        })
     }
 }
 
@@ -286,6 +384,8 @@ async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> 
             "clinic_kommo_payload_preview",
             "clinic_kommo_payload_preview.py",
             &[],
+            "sync",
+            "Gerar prévia",
         )?;
         emit_progress(
             &worker_handle,
@@ -314,7 +414,14 @@ async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> 
 
 #[tauri::command]
 fn run_secret_check<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
-    let stdout = run_backend_command(&handle, "sanity_check_secrets", "sanity_check_secrets.py", &[])?;
+    let stdout = run_backend_command(
+        &handle,
+        "sanity_check_secrets",
+        "sanity_check_secrets.py",
+        &[],
+        "sync",
+        "Verificar segredos",
+    )?;
     Ok(json!({ "stdout": stdout }))
 }
 
@@ -384,7 +491,7 @@ async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result
         let steps = sync_steps(&task)?;
         for (label, executable_name, script_name, args) in steps {
             emit_progress(&worker_handle, "sync", &task, label, "started", &format!("{label}..."));
-            match run_backend_command(&worker_handle, executable_name, script_name, &args) {
+            match run_backend_command(&worker_handle, executable_name, script_name, &args, "sync", label) {
                 Ok(stdout) => {
                     logs.push(json!({
                         "label": label,
@@ -466,7 +573,7 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
         let mut logs: Vec<Value> = Vec::new();
         for (label, executable_name, script_name, args) in steps {
             emit_progress(&worker_handle, "apply", "apply", label, "started", &format!("{label}..."));
-            match run_backend_command(&worker_handle, executable_name, script_name, &args) {
+            match run_backend_command(&worker_handle, executable_name, script_name, &args, "apply", label) {
                 Ok(stdout) => {
                     logs.push(json!({ "label": label, "stdout": stdout }));
                     emit_progress(&worker_handle, "apply", "apply", label, "completed", &format!("{label} concluído."));
