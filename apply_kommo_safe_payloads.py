@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -75,12 +76,17 @@ def main() -> None:
         logger.info("Modo preview. Use --apply para enviar ao Kommo.")
         return
 
-    session = _session(
-        base_url=base_url,
-        state_path=Path(args.state_path),
-        email=__import__("os").getenv("KOMMO_EMAIL"),
-        password=__import__("os").getenv("KOMMO_PASSWORD"),
-    )
+    try:
+        session = _session(
+            base_url=base_url,
+            state_path=Path(args.state_path),
+            email=__import__("os").getenv("KOMMO_EMAIL"),
+            password=__import__("os").getenv("KOMMO_PASSWORD"),
+        )
+    except Exception as exc:
+        logger.error("Falha ao autenticar no Kommo antes de iniciar a aplicacao: %s", exc)
+        logger.debug("Detalhes tecnicos:\n%s", traceback.format_exc())
+        raise SystemExit(1)
 
     results: List[Dict[str, Any]] = []
     total = len(plan)
