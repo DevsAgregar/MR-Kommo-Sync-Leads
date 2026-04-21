@@ -77,7 +77,7 @@ def _prepare_patch_payload(payload: Dict[str, Any], timezone_name: str) -> Dict[
         ]
     }
     if "price" in payload and payload["price"] is not None:
-        patch["price"] = round(float(payload["price"]), 2)
+        patch["price"] = int(round(float(payload["price"])))
     return patch
 
 
