@@ -110,6 +110,11 @@ def _normalize_date(value: Any) -> Optional[str]:
     text = str(value).strip()
     if not text:
         return None
+    if text.isdigit():
+        try:
+            return datetime.fromtimestamp(int(text)).strftime("%Y-%m-%d")
+        except (ValueError, OSError):
+            pass
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(text, fmt).strftime("%Y-%m-%d")
@@ -124,6 +129,11 @@ def _normalize_datetime(value: Any) -> Optional[str]:
     text = str(value).strip()
     if not text:
         return None
+    if text.isdigit():
+        try:
+            return datetime.fromtimestamp(int(text)).strftime("%Y-%m-%d %H:%M")
+        except (ValueError, OSError):
+            pass
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M"):
         try:
             return datetime.strptime(text, fmt).strftime("%Y-%m-%d %H:%M")
@@ -152,6 +162,13 @@ def _numeric_float(value: Any) -> Optional[float]:
         return float(normalized)
     except ValueError:
         return None
+
+
+def _lead_price_integer(value: Any) -> Optional[int]:
+    numeric = _numeric_float(value)
+    if numeric is None:
+        return None
+    return int(round(numeric))
 
 
 def _integer_value(value: Any) -> Optional[int]:
@@ -203,10 +220,21 @@ def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any)
     if candidate in (None, ""):
         return "skip", current, candidate
 
+    if spec.slug == "sale_value":
+        current_number = _lead_price_integer(current_raw)
+        candidate_number = _lead_price_integer(candidate_raw)
+        if candidate_number is None or candidate_number <= 0:
+            return "skip", current, None
+        if current_number is None:
+            return "fill_empty", current, f"{candidate_number:.2f}"
+        if candidate_number > current_number:
+            return "update_if_greater", current, f"{candidate_number:.2f}"
+        return "skip", current, f"{candidate_number:.2f}"
+
     if _is_empty_value(current_raw):
         return "fill_empty", current, candidate
 
-    if spec.slug in {"billed_total", "sale_value"}:
+    if spec.slug == "billed_total":
         current_number = _numeric_float(current_raw)
         candidate_number = _numeric_float(candidate_raw)
         if current_number is not None and candidate_number is not None and candidate_number > current_number:

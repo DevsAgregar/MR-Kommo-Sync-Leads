@@ -22,6 +22,8 @@ relatorio_vendas*.xlsx
 *.webm
 *.wav
 dist/
+build/
+build_installer.log
 target/
 src-tauri/target/
 src-tauri/gen/
