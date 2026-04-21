@@ -72,11 +72,32 @@ def _encrypt_env(key: bytes, env_bytes: bytes) -> bytes:
     return nonce + ciphertext
 
 
+def _ensure_db_key() -> None:
+    """Generate DB_ENCRYPTION_KEY in .env if missing.
+
+    The key must be stable across builds so existing SQLCipher databases stay
+    readable. We only append when absent; never overwrite a user-set value.
+    """
+    text = ENV_PATH.read_text(encoding="utf-8")
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("DB_ENCRYPTION_KEY="):
+            value = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            if value:
+                return
+    key_hex = secrets.token_bytes(32).hex()
+    separator = "" if text.endswith("\n") or not text else "\n"
+    ENV_PATH.write_text(text + separator + f"DB_ENCRYPTION_KEY={key_hex}\n", encoding="utf-8")
+    print("   DB_ENCRYPTION_KEY gerado e adicionado ao .env.")
+
+
 def build_secrets() -> None:
     if not ENV_PATH.exists():
         raise FileNotFoundError(
             f".env nao encontrado em {ENV_PATH}. Crie o arquivo antes de gerar o instalador."
         )
+
+    _ensure_db_key()
 
     env_bytes = ENV_PATH.read_bytes()
     if not env_bytes.strip():

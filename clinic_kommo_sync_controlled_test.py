@@ -5,7 +5,7 @@ import argparse
 import csv
 import json
 import re
-import sqlite3
+from db_util import connect as db_connect, sqlite3
 import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass
@@ -363,9 +363,9 @@ def _write_markdown(
 
 
 def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
-    patient_conn = sqlite3.connect(str(patient_db))
+    patient_conn = db_connect(patient_db)
     patient_conn.row_factory = sqlite3.Row
-    kommo_conn = sqlite3.connect(str(kommo_db))
+    kommo_conn = db_connect(kommo_db)
     kommo_conn.row_factory = sqlite3.Row
 
     try:

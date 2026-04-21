@@ -7,7 +7,7 @@ import json
 import logging
 import os
 import re
-import sqlite3
+from db_util import connect as db_connect, sqlite3
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
@@ -290,7 +290,7 @@ def _extract_services_from_event(event_payload: Dict[str, Any]) -> List[str]:
 class PatientOperationalStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = db_connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self._create_schema()
 
@@ -368,7 +368,7 @@ class PatientOperationalStore:
             if name:
                 patient_name_counts[name] = patient_name_counts.get(name, 0) + 1
 
-        kommo_conn = sqlite3.connect(str(kommo_db_path))
+        kommo_conn = db_connect(kommo_db_path)
         kommo_conn.row_factory = sqlite3.Row
         try:
             lead_rows = [(_normalize_name(row["name"])) for row in kommo_conn.execute("SELECT name FROM kommo_leads")]

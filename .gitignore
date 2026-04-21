@@ -16,6 +16,7 @@ output/
 pacientes_list*.xlsx
 relatorio_vendas*.xlsx
 *.sqlite3
+*.sqlite3.plain.bak
 *.zip
 *.mp4
 *.mov

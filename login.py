@@ -17,7 +17,7 @@ import json
 import logging
 import os
 import re
-import sqlite3
+from db_util import connect as db_connect, sqlite3
 import sys
 import unicodedata
 from datetime import datetime
@@ -565,7 +565,7 @@ class SQLitePatientStore:
         self.db_path = Path(db_path)
         self.logger = logger
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = db_connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self._criar_schema()

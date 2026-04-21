@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import re
-import sqlite3
+from db_util import connect as db_connect, sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -131,7 +131,7 @@ def _request_json(session: requests.Session, url: str, logger: logging.Logger, a
 def _determine_incremental_from(db_path: Path, lookback_seconds: int) -> Optional[int]:
     if not db_path.exists():
         return None
-    conn = sqlite3.connect(str(db_path))
+    conn = db_connect(db_path)
     try:
         row = conn.execute("SELECT MAX(updated_at) FROM kommo_leads").fetchone()
     finally:
@@ -275,7 +275,7 @@ class KommoSQLiteStore:
     def __init__(self, db_path: Path, logger: logging.Logger) -> None:
         self.db_path = Path(db_path)
         self.logger = logger
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = db_connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self._create_schema()
