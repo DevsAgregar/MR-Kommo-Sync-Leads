@@ -9,6 +9,8 @@ profiles/
 asaas_profile_dir.txt
 asaas_profile_runtime.json
 sessao_asaas.json
+*.json.plain.bak
+*.runtime.json
 
 # Exports e dados locais
 exports/

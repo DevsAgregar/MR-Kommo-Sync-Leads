@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from env_config import load_env_file
+import state_util
 from kommo_leads_sqlite import (
     DEFAULT_BASE_URL,
     DEFAULT_STATE_PATH,
@@ -131,6 +132,7 @@ def main() -> None:
     args = parser.parse_args()
 
     base_url = args.base_url.rstrip("/")
+    args.state_path = str(state_util.activate(Path(args.state_path)))
     lead_id = int(args.lead_id)
     output_dir = Path(args.output_dir)
     payload = _load_payload(Path(args.payloads_path), lead_id)

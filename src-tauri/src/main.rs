@@ -28,7 +28,7 @@ const RUNTIME_FILES: &[(&str, &str)] = &[
         "resources/runtime/mappings/clinic_kommo_service_mapping.csv",
         "mappings/clinic_kommo_service_mapping.csv",
     ),
-    ("resources/runtime/profiles/kommo_state.json", "profiles/kommo_state.json"),
+    ("resources/runtime/profiles/kommo_state.enc", "profiles/kommo_state.enc"),
     (
         "resources/runtime/exports/kommo/kommo_leads_latest.sql",
         "exports/kommo/kommo_leads_latest.sql",
@@ -365,7 +365,7 @@ fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, Str
         },
         "localFiles": {
             "env": file_meta(&root.join(".env")),
-            "kommoState": file_meta(&root.join("profiles").join("kommo_state.json")),
+            "kommoState": file_meta(&root.join("profiles").join("kommo_state.enc")),
             "patientDb": file_meta(&root.join("mirella_pacientes.sqlite3")),
             "kommoDb": file_meta(&root.join("mirella_kommo_leads.sqlite3")),
             "safePayloads": file_meta(&safe_payloads_path),

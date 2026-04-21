@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from env_config import load_env_file
+import state_util
 from apply_single_kommo_payload import (
     DEFAULT_PAYLOADS_PATH,
     DEFAULT_TIMEZONE,
@@ -58,6 +59,7 @@ def main() -> None:
     logger = logging.getLogger("apply_kommo_safe_payloads")
 
     base_url = args.base_url.rstrip("/")
+    args.state_path = str(state_util.activate(Path(args.state_path)))
     output_dir = Path(args.output_dir)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     payloads = _load_payloads(Path(args.payloads_path), args.lead_id, args.limit)

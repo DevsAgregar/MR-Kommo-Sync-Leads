@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 import requests
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 from env_config import load_env_file
+import state_util
 
 
 DEFAULT_SUBDOMAIN = "mirellarabelo"
@@ -23,7 +24,7 @@ DEFAULT_BASE_URL = f"https://{DEFAULT_SUBDOMAIN}.kommo.com"
 DEFAULT_LOGIN_PIPELINE_ID = "9715568"
 DEFAULT_DB_PATH = Path("mirella_kommo_leads.sqlite3")
 DEFAULT_OUTPUT_DIR = Path("exports") / "kommo"
-DEFAULT_STATE_PATH = Path("profiles") / "kommo_state.json"
+DEFAULT_STATE_PATH = Path("profiles") / "kommo_state.enc"
 DEFAULT_TIMEOUT_MS = 60_000
 DEFAULT_SYNC_MODE = "full"
 DEFAULT_INCREMENTAL_LOOKBACK_SECONDS = 86_400
@@ -798,7 +799,7 @@ def main() -> None:
     pipeline_id = str(args.pipeline_id or "").strip() or None
     db_path = Path(args.db_path)
     output_dir = Path(args.output_dir)
-    state_path = Path(args.state_path)
+    state_path = state_util.activate(Path(args.state_path))
     updated_from = None if args.sync_mode == "full" else _determine_incremental_from(db_path, args.incremental_lookback_seconds)
 
     logger.info("============================================================")

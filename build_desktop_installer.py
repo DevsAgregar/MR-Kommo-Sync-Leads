@@ -57,7 +57,7 @@ RUNTIME_FILES = [
     (ROOT / ".env.example", RUNTIME_DIR / ".env.example"),
     (ROOT / "mirella_pacientes.sqlite3", RUNTIME_DIR / "mirella_pacientes.sqlite3"),
     (ROOT / "mirella_kommo_leads.sqlite3", RUNTIME_DIR / "mirella_kommo_leads.sqlite3"),
-    (ROOT / "profiles" / "kommo_state.json", RUNTIME_DIR / "profiles" / "kommo_state.json"),
+    (ROOT / "profiles" / "kommo_state.enc", RUNTIME_DIR / "profiles" / "kommo_state.enc"),
     (
         ROOT / "exports" / "kommo" / "kommo_leads_latest.sql",
         RUNTIME_DIR / "exports" / "kommo" / "kommo_leads_latest.sql",
