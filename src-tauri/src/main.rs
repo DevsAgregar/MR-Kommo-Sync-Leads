@@ -3,13 +3,17 @@
 mod secret_key;
 mod secrets;
 
-use serde::Serialize;
+use reqwest::blocking::Client;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::{
+    collections::HashMap,
     fs,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Mutex, OnceLock},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -18,6 +22,7 @@ use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Runtime};
 use std::os::windows::process::CommandExt;
 
 const RUNTIME_FILES: &[(&str, &str)] = &[
+    ("resources/runtime/app_auth.json", "app_auth.json"),
     ("resources/runtime/mirella_pacientes.sqlite3", "mirella_pacientes.sqlite3"),
     ("resources/runtime/mirella_kommo_leads.sqlite3", "mirella_kommo_leads.sqlite3"),
     (
@@ -81,11 +86,199 @@ struct LogPayload {
     ts_ms: u128,
 }
 
+#[derive(Clone)]
+struct AuthSession {
+    username: String,
+    authenticated_at: u64,
+}
+
+#[derive(Clone, Deserialize)]
+struct LocalAuthFile {
+    auth: LocalAuthConfig,
+}
+
+#[derive(Clone, Deserialize)]
+struct LocalAuthConfig {
+    enabled: bool,
+    gist_url: String,
+    gist_file: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GithubGistResponse {
+    files: HashMap<String, GithubGistFile>,
+}
+
+#[derive(Deserialize)]
+struct GithubGistFile {
+    filename: Option<String>,
+    content: Option<String>,
+    raw_url: Option<String>,
+    truncated: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct GistAuthRoot {
+    mirella_kommo_sync: GistAuthConfig,
+}
+
+#[derive(Deserialize)]
+struct GistAuthConfig {
+    enabled: bool,
+    users: Vec<GistAuthUser>,
+}
+
+#[derive(Deserialize)]
+struct GistAuthUser {
+    username: String,
+    password_sha256: Option<String>,
+    password: Option<String>,
+}
+
+static AUTH_SESSION: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
+
 fn now_ms() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis())
         .unwrap_or(0)
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn auth_session() -> &'static Mutex<Option<AuthSession>> {
+    AUTH_SESSION.get_or_init(|| Mutex::new(None))
+}
+
+fn auth_file_path<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> {
+    let root = ensure_runtime_seeded(handle)?;
+    if is_dev_mode() {
+        let dev_config = root.join("config").join("app_auth.json");
+        if dev_config.exists() {
+            return Ok(dev_config);
+        }
+    }
+    Ok(root.join("app_auth.json"))
+}
+
+fn read_local_auth_config<R: Runtime>(handle: &AppHandle<R>) -> Result<LocalAuthConfig, String> {
+    let path = auth_file_path(handle)?;
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("Falha ao ler config de login {}: {}", path.display(), error))?;
+    let config: LocalAuthFile = serde_json::from_str(&text)
+        .map_err(|error| format!("Config de login invalida {}: {}", path.display(), error))?;
+    Ok(config.auth)
+}
+
+fn extract_gist_id(input: &str) -> Option<String> {
+    let mut best = String::new();
+    let mut current = String::new();
+    for ch in input.chars() {
+        if ch.is_ascii_hexdigit() {
+            current.push(ch);
+            continue;
+        }
+        if current.len() > best.len() {
+            best = current.clone();
+        }
+        current.clear();
+    }
+    if current.len() > best.len() {
+        best = current;
+    }
+    if best.len() >= 20 {
+        Some(best)
+    } else {
+        None
+    }
+}
+
+fn fetch_text(client: &Client, url: &str) -> Result<String, String> {
+    let response = client
+        .get(url)
+        .header("User-Agent", "Mirella-Kommo-Sync")
+        .send()
+        .map_err(|error| format!("Falha HTTP ao carregar config de login: {}", error))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("GitHub retornou HTTP {} ao carregar config de login.", status));
+    }
+    response
+        .text()
+        .map_err(|error| format!("Falha ao ler resposta do GitHub: {}", error))
+}
+
+fn fetch_gist_auth_config(config: &LocalAuthConfig) -> Result<GistAuthConfig, String> {
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|error| format!("Falha ao preparar cliente HTTP: {}", error))?;
+
+    let content = if config.gist_url.contains("gist.githubusercontent.com") {
+        fetch_text(&client, &config.gist_url)?
+    } else {
+        let gist_id = extract_gist_id(&config.gist_url)
+            .ok_or_else(|| "Nao consegui extrair o ID do Gist da config de login.".to_string())?;
+        let api_url = format!("https://api.github.com/gists/{gist_id}");
+        let text = fetch_text(&client, &api_url)?;
+        let gist: GithubGistResponse = serde_json::from_str(&text)
+            .map_err(|error| format!("Resposta do Gist invalida: {}", error))?;
+        let selected = if let Some(file_name) = &config.gist_file {
+            gist.files
+                .get(file_name)
+                .or_else(|| gist.files.values().find(|file| file.filename.as_deref() == Some(file_name)))
+        } else {
+            gist.files
+                .values()
+                .find(|file| file.filename.as_deref().map(|name| name.ends_with(".json")).unwrap_or(false))
+        }
+        .ok_or_else(|| "Nenhum arquivo JSON de login encontrado no Gist.".to_string())?;
+
+        if selected.truncated.unwrap_or(false) {
+            let raw_url = selected
+                .raw_url
+                .as_deref()
+                .ok_or_else(|| "Arquivo do Gist truncado e sem raw_url.".to_string())?;
+            fetch_text(&client, raw_url)?
+        } else {
+            selected
+                .content
+                .clone()
+                .ok_or_else(|| "Arquivo de login do Gist esta vazio.".to_string())?
+        }
+    };
+
+    let root: GistAuthRoot = serde_json::from_str(&content)
+        .map_err(|error| format!("JSON de login do Gist invalido: {}", error))?;
+    Ok(root.mirella_kommo_sync)
+}
+
+fn sha256_hex(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    let digest = hasher.finalize();
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn is_authenticated() -> Option<AuthSession> {
+    auth_session().lock().ok()?.clone()
+}
+
+fn ensure_authenticated<R: Runtime>(handle: &AppHandle<R>) -> Result<(), String> {
+    let config = read_local_auth_config(handle)?;
+    if !config.enabled {
+        return Ok(());
+    }
+    if is_authenticated().is_some() {
+        Ok(())
+    } else {
+        Err("Login obrigatorio. Abra o app e autentique antes de continuar.".to_string())
+    }
 }
 
 fn emit_log<R: Runtime>(
@@ -339,7 +532,69 @@ fn run_backend_command<R: Runtime>(
 }
 
 #[tauri::command]
+fn get_auth_state<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let config = read_local_auth_config(&handle)?;
+    let session = is_authenticated();
+    Ok(json!({
+        "required": config.enabled,
+        "authenticated": !config.enabled || session.is_some(),
+        "username": session.as_ref().map(|item| item.username.clone()),
+        "authenticatedAt": session.as_ref().map(|item| item.authenticated_at),
+        "gistConfigured": !config.gist_url.trim().is_empty(),
+        "gistUrl": config.gist_url,
+        "gistFile": config.gist_file,
+    }))
+}
+
+#[tauri::command]
+fn login_app<R: Runtime>(handle: AppHandle<R>, username: String, password: String) -> Result<Value, String> {
+    let config = read_local_auth_config(&handle)?;
+    if !config.enabled {
+        return get_auth_state(handle);
+    }
+
+    let gist_config = fetch_gist_auth_config(&config)?;
+    if !gist_config.enabled {
+        return Err("Login desabilitado pela configuracao remota.".to_string());
+    }
+
+    let username_input = username.trim();
+    let password_hash = sha256_hex(&password);
+    let matched = gist_config.users.iter().any(|user| {
+        user.username == username_input
+            && (
+                user.password_sha256
+                    .as_ref()
+                    .map(|hash| hash.eq_ignore_ascii_case(&password_hash))
+                    .unwrap_or(false)
+                || user.password.as_deref() == Some(password.as_str())
+            )
+    });
+
+    if !matched {
+        return Err("Usuario ou senha invalidos.".to_string());
+    }
+
+    *auth_session()
+        .lock()
+        .map_err(|_| "Falha ao registrar sessao autenticada.".to_string())? = Some(AuthSession {
+        username: username_input.to_string(),
+        authenticated_at: now_secs(),
+    });
+    get_auth_state(handle)
+}
+
+#[tauri::command]
+fn logout_app<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    *auth_session()
+        .lock()
+        .map_err(|_| "Falha ao encerrar sessao autenticada.".to_string())? = None;
+    get_auth_state(handle)
+}
+
+#[tauri::command]
 fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
     let root = ensure_runtime_seeded(&handle)?;
     let preview_dir = root.join("exports").join("sync_preview");
     let summary_path = preview_dir.join("clinic_kommo_preview_summary.json");
@@ -381,6 +636,7 @@ fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, Str
 async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_authenticated(&worker_handle)?;
         emit_progress(
             &worker_handle,
             "sync",
@@ -424,6 +680,7 @@ async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> 
 
 #[tauri::command]
 fn run_secret_check<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
     let stdout = run_backend_command(
         &handle,
         "sanity_check_secrets",
@@ -497,6 +754,7 @@ fn sync_steps(task: &str) -> Result<Vec<(&'static str, &'static str, &'static st
 async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result<Value, String> {
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_authenticated(&worker_handle)?;
         let mut logs: Vec<Value> = Vec::new();
         let steps = sync_steps(&task)?;
         for (label, executable_name, script_name, args) in steps {
@@ -536,6 +794,7 @@ async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result
 
 #[tauri::command]
 fn read_mapping<R: Runtime>(handle: AppHandle<R>, kind: String) -> Result<String, String> {
+    ensure_authenticated(&handle)?;
     let root = ensure_runtime_seeded(&handle)?;
     let file_name = match kind.as_str() {
         "origin" => "clinic_kommo_origin_mapping.csv",
@@ -547,6 +806,7 @@ fn read_mapping<R: Runtime>(handle: AppHandle<R>, kind: String) -> Result<String
 
 #[tauri::command]
 fn read_review_rows<R: Runtime>(handle: AppHandle<R>) -> Result<String, String> {
+    ensure_authenticated(&handle)?;
     let root = ensure_runtime_seeded(&handle)?;
     fs::read_to_string(
         root.join("exports")
@@ -558,6 +818,7 @@ fn read_review_rows<R: Runtime>(handle: AppHandle<R>) -> Result<String, String> 
 
 #[tauri::command]
 fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
     let root = ensure_runtime_seeded(&handle)?;
     let dir = root.join("exports").join("apply_safe");
     if !dir.exists() {
@@ -610,6 +871,7 @@ fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String>
 async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        ensure_authenticated(&worker_handle)?;
         let steps = [
             (
                 "Aplicar no Kommo",
@@ -664,6 +926,9 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
+            get_auth_state,
+            login_app,
+            logout_app,
             get_dashboard_snapshot,
             run_preview,
             run_secret_check,

@@ -11,7 +11,9 @@ import {
   Database,
   HelpCircle,
   Info,
+  LockKeyhole,
   Loader2,
+  LogOut,
   RefreshCw,
   Send,
   Sparkles,
@@ -101,6 +103,16 @@ type StepState = {
   message?: string;
   startedAt?: number;
   finishedAt?: number;
+};
+
+type AuthState = {
+  required: boolean;
+  authenticated: boolean;
+  username?: string | null;
+  authenticatedAt?: number | null;
+  gistConfigured?: boolean;
+  gistUrl?: string;
+  gistFile?: string | null;
 };
 
 const LOG_BUFFER_SIZE = 400;
@@ -371,6 +383,59 @@ function Pill({
       {children}
     </span>
   );
+}
+
+export default function App() {
+  const [auth, setAuth] = useState<AuthState | null>(null);
+  const [loadingAuth, setLoadingAuth] = useState(true);
+  const [authError, setAuthError] = useState("");
+
+  const refreshAuth = useCallback(async () => {
+    setLoadingAuth(true);
+    try {
+      const state = await call<AuthState>("get_auth_state");
+      setAuth(state);
+      setAuthError("");
+    } catch (error) {
+      setAuth(null);
+      setAuthError(String(error));
+    } finally {
+      setLoadingAuth(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshAuth();
+  }, [refreshAuth]);
+
+  async function handleLogin(username: string, password: string) {
+    setAuthError("");
+    const state = await call<AuthState>("login_app", { username, password });
+    setAuth(state);
+  }
+
+  async function handleLogout() {
+    try {
+      const state = await call<AuthState>("logout_app");
+      setAuth(state);
+    } catch (error) {
+      setAuthError(String(error));
+      setAuth({ required: true, authenticated: false });
+    }
+  }
+
+  if (loadingAuth || !auth || (auth.required && !auth.authenticated)) {
+    return (
+      <LoginScreen
+        auth={auth}
+        loading={loadingAuth}
+        error={authError}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  return <AuthenticatedApp auth={auth} onLogout={handleLogout} />;
 }
 
 function StatTile({
@@ -1377,6 +1442,109 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   );
 }
 
+function LoginScreen({
+  auth,
+  loading,
+  error,
+  onLogin
+}: {
+  auth: AuthState | null;
+  loading: boolean;
+  error: string;
+  onLogin: (username: string, password: string) => Promise<void>;
+}) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSubmitting(true);
+    try {
+      await onLogin(username, password);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-100">
+      <section className="surface w-full max-w-md rounded-2xl border border-white/10 p-6 shadow-2xl shadow-black/40">
+        <div className="flex items-center gap-3">
+          <div
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-950 shadow-lg shadow-emerald-500/30"
+            style={{ background: "linear-gradient(135deg, #34d399 0%, #22d3ee 100%)" }}
+            aria-hidden
+          >
+            <LockKeyhole className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
+              Mirella Sync
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-white">Acesso restrito</h1>
+          </div>
+        </div>
+
+        <p className="mt-5 text-sm leading-6 text-slate-300">
+          Entre com o usuário autorizado para acessar a rotina de sincronização do Kommo.
+        </p>
+
+        <form className="mt-6 space-y-4" onSubmit={submit}>
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400" htmlFor="login-user">
+              Usuário
+            </label>
+            <input
+              id="login-user"
+              value={username}
+              onChange={(event) => setUsername(event.target.value.toUpperCase())}
+              placeholder="MIRELLA RABELLO"
+              autoComplete="username"
+              className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 text-sm font-semibold text-white placeholder:text-slate-600 focus:border-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-400/20"
+              disabled={loading || submitting}
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400" htmlFor="login-password">
+              Senha
+            </label>
+            <input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 text-sm text-white placeholder:text-slate-600 focus:border-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-400/20"
+              disabled={loading || submitting}
+            />
+          </div>
+
+          {error ? (
+            <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+              {error}
+            </div>
+          ) : null}
+
+          <button
+            type="submit"
+            disabled={loading || submitting || !username.trim() || !password}
+            className="btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl px-5 text-sm"
+          >
+            {loading || submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
+            Entrar
+          </button>
+        </form>
+
+        <div className="mt-5 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-5 text-slate-400">
+          Configuração remota: {auth?.gistConfigured ? "Gist conectado" : "Gist não configurado"}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function loadInitialPage(): Page {
   try {
     const stored = window.localStorage.getItem(PAGE_STORAGE_KEY);
@@ -1387,7 +1555,7 @@ function loadInitialPage(): Page {
   return "sync";
 }
 
-export default function App() {
+function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () => Promise<void> }) {
   const { snapshot, desktop, refresh } = useSnapshot();
   const review = useReviewRows();
   const applyResults = useApplyResults();
@@ -1624,6 +1792,15 @@ export default function App() {
                 Processando
               </div>
             ) : null}
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white md:inline-flex"
+              title={auth.username ? `Sessão: ${auth.username}` : "Sair"}
+            >
+              <LogOut className="h-3 w-3" />
+              Sair
+            </button>
             <nav
               className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1"
               aria-label="Navegação principal"

@@ -55,6 +55,7 @@ PYINSTALLER_EXCLUDES = [
 ]
 
 RUNTIME_FILES = [
+    (ROOT / "config" / "app_auth.json", RUNTIME_DIR / "app_auth.json"),
     (ROOT / ".env.example", RUNTIME_DIR / ".env.example"),
     (ROOT / "mirella_pacientes.sqlite3", RUNTIME_DIR / "mirella_pacientes.sqlite3"),
     (ROOT / "mirella_kommo_leads.sqlite3", RUNTIME_DIR / "mirella_kommo_leads.sqlite3"),
