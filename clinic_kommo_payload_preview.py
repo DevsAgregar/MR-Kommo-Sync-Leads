@@ -164,13 +164,6 @@ def _numeric_float(value: Any) -> Optional[float]:
         return None
 
 
-def _lead_price_integer(value: Any) -> Optional[int]:
-    numeric = _numeric_float(value)
-    if numeric is None:
-        return None
-    return int(round(numeric))
-
-
 def _integer_value(value: Any) -> Optional[int]:
     normalized = _normalize_integer(value)
     if normalized is None:
@@ -221,8 +214,8 @@ def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any)
         return "skip", current, candidate
 
     if spec.slug == "sale_value":
-        current_number = _lead_price_integer(current_raw)
-        candidate_number = _lead_price_integer(candidate_raw)
+        current_number = _numeric_float(current_raw)
+        candidate_number = _numeric_float(candidate_raw)
         if candidate_number is None or candidate_number <= 0:
             return "skip", current, None
         if current_number is None:
