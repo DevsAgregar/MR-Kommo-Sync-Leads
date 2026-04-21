@@ -611,7 +611,7 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
                 "Atualizar espelho Kommo",
                 "kommo_leads_sqlite",
                 "kommo_leads_sqlite.py",
-                vec!["--sync-mode", "incremental"],
+                vec!["--sync-mode", "full"],
             ),
             (
                 "Gerar nova prévia",
