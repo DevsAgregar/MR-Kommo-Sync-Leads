@@ -23,7 +23,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / ".env"
 KEY_RS_PATH = ROOT / "src-tauri" / "src" / "secret_key.rs"
 ENC_PATH = ROOT / "src-tauri" / "resources" / "runtime" / "secrets.enc"

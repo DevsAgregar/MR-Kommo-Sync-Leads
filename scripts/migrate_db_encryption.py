@@ -24,7 +24,7 @@ from env_config import load_env_file
 from sqlcipher3 import dbapi2 as sqlcipher
 
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DBS = [
     ROOT / "mirella_pacientes.sqlite3",
     ROOT / "mirella_kommo_leads.sqlite3",

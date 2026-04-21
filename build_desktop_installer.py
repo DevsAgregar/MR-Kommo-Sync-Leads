@@ -162,7 +162,7 @@ def copy_runtime_files() -> None:
 
 def encrypt_secrets() -> None:
     print("== Cifrando segredos (.env -> secrets.enc) ==")
-    script = ROOT / "build_secrets.py"
+    script = ROOT / "scripts" / "build_secrets.py"
     if not script.exists():
         raise FileNotFoundError(f"build_secrets.py ausente: {script}")
     run([resolve_command("py.exe", "py"), "-3", str(script)])

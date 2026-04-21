@@ -12,6 +12,9 @@ sessao_asaas.json
 *.json.plain.bak
 *.runtime.json
 
+# Midia de referencia (documentos, videos, prints de apoio)
+reference/
+
 # Exports e dados locais
 exports/
 output/
