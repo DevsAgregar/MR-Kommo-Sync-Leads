@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
@@ -136,6 +136,54 @@ struct GistAuthUser {
 }
 
 static AUTH_SESSION: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
+static ACTIVE_CHILDREN: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+
+fn active_children() -> &'static Mutex<HashSet<u32>> {
+    ACTIVE_CHILDREN.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn register_child(pid: u32) {
+    if let Ok(mut children) = active_children().lock() {
+        children.insert(pid);
+    }
+}
+
+fn unregister_child(pid: u32) {
+    if let Ok(mut children) = active_children().lock() {
+        children.remove(&pid);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn kill_process_tree(pid: u32) {
+    let mut command = Command::new("taskkill");
+    command
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command.creation_flags(CREATE_NO_WINDOW);
+    let _ = command.status();
+}
+
+#[cfg(not(target_os = "windows"))]
+fn kill_process_tree(pid: u32) {
+    let _ = Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+fn kill_active_children() {
+    let pids: Vec<u32> = active_children()
+        .lock()
+        .map(|children| children.iter().copied().collect())
+        .unwrap_or_default();
+    for pid in pids {
+        kill_process_tree(pid);
+        unregister_child(pid);
+    }
+}
 
 fn now_ms() -> u128 {
     SystemTime::now()
@@ -469,14 +517,24 @@ fn run_backend_command<R: Runtime>(
     command.creation_flags(CREATE_NO_WINDOW);
 
     let mut child = command.spawn().map_err(|error| error.to_string())?;
-    let stdout_pipe = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Falha ao abrir stdout".to_string())?;
-    let stderr_pipe = child
-        .stderr
-        .take()
-        .ok_or_else(|| "Falha ao abrir stderr".to_string())?;
+    let child_pid = child.id();
+    register_child(child_pid);
+    let stdout_pipe = match child.stdout.take() {
+        Some(pipe) => pipe,
+        None => {
+            unregister_child(child_pid);
+            let _ = child.kill();
+            return Err("Falha ao abrir stdout".to_string());
+        }
+    };
+    let stderr_pipe = match child.stderr.take() {
+        Some(pipe) => pipe,
+        None => {
+            unregister_child(child_pid);
+            let _ = child.kill();
+            return Err("Falha ao abrir stderr".to_string());
+        }
+    };
 
     let stdout_handle = handle.clone();
     let stdout_flow = flow.to_string();
@@ -516,7 +574,14 @@ fn run_backend_command<R: Runtime>(
         collected
     });
 
-    let status = child.wait().map_err(|error| error.to_string())?;
+    let status = match child.wait() {
+        Ok(status) => status,
+        Err(error) => {
+            unregister_child(child_pid);
+            return Err(error.to_string());
+        }
+    };
+    unregister_child(child_pid);
     let stdout_text = stdout_reader.join().unwrap_or_default();
     let stderr_text = stderr_reader.join().unwrap_or_default();
 
@@ -925,6 +990,11 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
 
 fn main() {
     tauri::Builder::default()
+        .on_window_event(|_window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                kill_active_children();
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_auth_state,
             login_app,
