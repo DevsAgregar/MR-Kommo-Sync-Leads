@@ -76,6 +76,22 @@ def seal(enc_path: Path) -> None:
         pass
 
 
+def discard(enc_path: Path) -> None:
+    """Remove the plaintext sibling without updating the encrypted state."""
+    enc_path = Path(enc_path)
+    if enc_path.suffix != _ENC_SUFFIX:
+        return
+    plain = _plain_sibling(enc_path)
+    try:
+        plain.unlink()
+    except OSError:
+        pass
+
+
+def is_encrypted_path(path: Path) -> bool:
+    return Path(path).suffix == _ENC_SUFFIX
+
+
 def activate(enc_path: Path) -> Path:
     """Prepare the plaintext state and register an atexit seal. Returns the
     plaintext path the caller should pass to Playwright / json.loads.
@@ -84,3 +100,12 @@ def activate(enc_path: Path) -> Path:
     if Path(enc_path).suffix == _ENC_SUFFIX:
         atexit.register(seal, Path(enc_path))
     return plain
+
+
+def activate_manual(enc_path: Path) -> Path:
+    """Prepare plaintext without registering automatic seal.
+
+    Callers that must validate the state before persisting it should use this
+    and then explicitly call ``seal`` or ``discard``.
+    """
+    return prepare(enc_path)

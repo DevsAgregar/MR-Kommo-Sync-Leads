@@ -52,6 +52,16 @@ def _quote_identifier(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
+def _sql_literal(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, bytes):
+        return "X'" + value.hex() + "'"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 def _iso_from_timestamp(value: Any) -> Optional[str]:
     if value in (None, "", 0):
         return None
@@ -167,7 +177,7 @@ def _login_if_needed(
     page.wait_for_timeout(1_000)
 
     title = page.title().lower()
-    if "authorization" not in title and "/oauth2/authorize" not in page.url:
+    if _browser_has_api_access(page, base_url, logger):
         context.storage_state(path=str(state_path))
         return
 
@@ -203,8 +213,26 @@ def _login_if_needed(
     if not login_finished:
         raise RuntimeError("Login Kommo nao foi concluido. Verifique credenciais ou validacao adicional.")
 
+    if not _browser_has_api_access(page, base_url, logger):
+        raise RuntimeError(
+            "Login Kommo aparentemente concluiu, mas a API continuou sem autorizacao. "
+            "Pode haver captcha, 2FA, bloqueio de sessao ou credenciais invalidas."
+        )
+
     state_path.parent.mkdir(parents=True, exist_ok=True)
     context.storage_state(path=str(state_path))
+
+
+def _browser_has_api_access(page: Page, base_url: str, logger: logging.Logger) -> bool:
+    try:
+        response = page.request.get(f"{base_url}/api/v4/account", timeout=15_000)
+        if response.status == 200:
+            return True
+        logger.info("Validacao de sessao Kommo via navegador retornou HTTP %s.", response.status)
+        return False
+    except Exception as exc:
+        logger.info("Falha ao validar sessao Kommo via navegador: %s", exc)
+        return False
 
 
 def _create_http_session(
@@ -254,6 +282,12 @@ def _refresh_session_with_browser(
     logger: logging.Logger,
 ) -> None:
     logger.info("Sessao HTTP sem autorizacao; renovando cookie pelo navegador.")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    if state_path.exists():
+        try:
+            state_path.unlink()
+        except OSError:
+            pass
     with sync_playwright() as playwright:
         try:
             browser = playwright.chromium.launch(channel="msedge", headless=not headed)
@@ -270,6 +304,18 @@ def _refresh_session_with_browser(
         finally:
             context.close()
             browser.close()
+
+    session = _create_http_session(base_url, state_path, None)
+    try:
+        _request_json(session, f"{base_url}/api/v4/account", logger, attempts=1)
+    except KommoAuthError as exc:
+        try:
+            state_path.unlink()
+        except OSError:
+            pass
+        raise RuntimeError(
+            "Renovacao da sessao Kommo falhou: estado de navegador renovado nao passou em /api/v4/account."
+        ) from exc
 
 
 class KommoSQLiteStore:
@@ -715,8 +761,41 @@ class KommoSQLiteStore:
             )
             self.conn.commit()
         with output_path.open("w", encoding="utf-8", newline="\n") as file:
-            for line in self.conn.iterdump():
-                file.write(f"{line}\n")
+            file.write("PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n")
+            objects = self.conn.execute(
+                """
+                SELECT type, name, tbl_name, sql
+                FROM sqlite_master
+                WHERE sql IS NOT NULL
+                  AND name NOT LIKE 'sqlite_%'
+                ORDER BY
+                    CASE type
+                        WHEN 'table' THEN 1
+                        WHEN 'index' THEN 3
+                        WHEN 'trigger' THEN 4
+                        WHEN 'view' THEN 5
+                        ELSE 9
+                    END,
+                    name
+                """
+            ).fetchall()
+
+            for row in objects:
+                if row["type"] == "table":
+                    file.write(f"{row['sql']};\n")
+                    columns = [
+                        column["name"]
+                        for column in self.conn.execute(f"PRAGMA table_info({_quote_identifier(row['name'])})")
+                    ]
+                    quoted_columns = ", ".join(_quote_identifier(column) for column in columns)
+                    for data_row in self.conn.execute(f"SELECT * FROM {_quote_identifier(row['name'])}"):
+                        values = ", ".join(_sql_literal(data_row[column]) for column in columns)
+                        file.write(
+                            f"INSERT INTO {_quote_identifier(row['name'])} ({quoted_columns}) VALUES ({values});\n"
+                        )
+                elif row["type"] in {"index", "trigger", "view"}:
+                    file.write(f"{row['sql']};\n")
+            file.write("COMMIT;\n")
         return output_path
 
 
@@ -799,7 +878,8 @@ def main() -> None:
     pipeline_id = str(args.pipeline_id or "").strip() or None
     db_path = Path(args.db_path)
     output_dir = Path(args.output_dir)
-    state_path = state_util.activate(Path(args.state_path))
+    state_enc_path = Path(args.state_path)
+    state_path = state_util.activate_manual(state_enc_path)
     updated_from = None if args.sync_mode == "full" else _determine_incremental_from(db_path, args.incremental_lookback_seconds)
 
     logger.info("============================================================")
@@ -813,22 +893,29 @@ def main() -> None:
     logger.info("Saida SQL: %s", output_dir)
     logger.info("============================================================")
 
-    session = _create_http_session(base_url, state_path, args.access_token)
     try:
-        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
-    except KommoAuthError:
-        if args.access_token:
-            raise
-        _refresh_session_with_browser(
-            base_url=base_url,
-            email=args.email,
-            password=args.password,
-            state_path=state_path,
-            headed=args.headed,
-            logger=logger,
-        )
         session = _create_http_session(base_url, state_path, args.access_token)
-        leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
+        try:
+            leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
+        except KommoAuthError:
+            if args.access_token:
+                raise
+            _refresh_session_with_browser(
+                base_url=base_url,
+                email=args.email,
+                password=args.password,
+                state_path=state_path,
+                headed=args.headed,
+                logger=logger,
+            )
+            session = _create_http_session(base_url, state_path, args.access_token)
+            leads, fields = fetch_kommo_data(session, base_url, pipeline_id, updated_from, logger)
+        if state_util.is_encrypted_path(state_enc_path):
+            state_util.seal(state_enc_path)
+    except Exception:
+        if state_util.is_encrypted_path(state_enc_path):
+            state_util.discard(state_enc_path)
+        raise
 
     store = KommoSQLiteStore(db_path, logger)
     try:
