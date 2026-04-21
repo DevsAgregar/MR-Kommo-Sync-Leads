@@ -83,8 +83,10 @@ def main() -> None:
     )
 
     results: List[Dict[str, Any]] = []
+    total = len(plan)
     for index, item in enumerate(plan, start=1):
         lead_id = int(item["id"])
+        lead_name = item.get("lead_name") or f"Lead {lead_id}"
         try:
             result = _request_json(
                 session,
@@ -94,10 +96,10 @@ def main() -> None:
                 headers={"Content-Type": "application/json", "Accept": "application/json"},
             )
             results.append({"id": lead_id, "lead_name": item.get("lead_name"), "ok": True, "result": result})
+            logger.info("[%s/%s] OK  %s (id=%s)", index, total, lead_name, lead_id)
         except Exception as exc:
             results.append({"id": lead_id, "lead_name": item.get("lead_name"), "ok": False, "error": str(exc)})
-        if index % 25 == 0 or index == len(plan):
-            logger.info("Aplicados %s/%s payloads", index, len(plan))
+            logger.info("[%s/%s] ERR %s (id=%s) -> %s", index, total, lead_name, lead_id, exc)
 
     _write_json(output_dir / f"{run_id}_result.json", results)
     ok_count = sum(1 for item in results if item["ok"])

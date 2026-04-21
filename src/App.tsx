@@ -285,6 +285,38 @@ function useReviewRows() {
   return { rows, refresh };
 }
 
+type ApplyResultItem = {
+  id: number;
+  lead_name?: string | null;
+  ok: boolean;
+  error?: string;
+};
+
+type ApplyResults = {
+  runId: string | null;
+  modifiedUnix: number | null;
+  items: ApplyResultItem[];
+};
+
+function useApplyResults() {
+  const [data, setData] = useState<ApplyResults>({ runId: null, modifiedUnix: null, items: [] });
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await call<ApplyResults>("read_apply_results");
+      setData(result ?? { runId: null, modifiedUnix: null, items: [] });
+    } catch {
+      setData({ runId: null, modifiedUnix: null, items: [] });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { data, refresh };
+}
+
 function useElapsed(startedAt?: number, finishedAt?: number) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -853,6 +885,67 @@ function ApplyRibbon({
   );
 }
 
+function AppliedPanel({ data }: { data: ApplyResults }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = data.items ?? [];
+  if (!items.length) return null;
+  const okCount = items.filter((item) => item.ok).length;
+  const errCount = items.length - okCount;
+  const visible = expanded ? items : items.slice(0, 8);
+  return (
+    <Card className="p-4 md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Pill tone="ok" icon={<CheckCircle2 className="h-3 w-3" />}>Última aplicação</Pill>
+          <h3 className="mt-2 text-lg font-semibold text-white">Clientes atualizados no Kommo</h3>
+          <p className="mt-1 text-xs text-slate-300">
+            {number(okCount)} enviados com sucesso{errCount > 0 ? ` · ${number(errCount)} com erro` : ""}
+            {data.modifiedUnix ? ` · ${timeAgo(data.modifiedUnix)}` : ""}
+          </p>
+        </div>
+        {items.length > 8 ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+          >
+            {expanded ? "Mostrar menos" : `Ver todos (${number(items.length)})`}
+          </button>
+        ) : null}
+      </div>
+      <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+        {visible.map((item) => (
+          <li
+            key={item.id}
+            className={cx(
+              "flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs",
+              item.ok
+                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+                : "border-rose-400/40 bg-rose-500/10 text-rose-100"
+            )}
+            title={item.error || undefined}
+          >
+            {item.ok ? (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-white">
+                {item.lead_name || `Lead ${item.id}`}
+              </p>
+              <p className="truncate text-[10px] text-slate-400">
+                id {item.id}
+                {!item.ok && item.error ? ` · ${item.error}` : ""}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 function SyncPage({
   snapshot,
   desktop,
@@ -862,6 +955,7 @@ function SyncPage({
   applySteps,
   syncLogs,
   applyLogs,
+  applyResults,
   onQuickUpdate,
   onFullUpdate,
   onApply,
@@ -876,6 +970,7 @@ function SyncPage({
   applySteps: StepState[];
   syncLogs: Record<string, LogLine[]>;
   applyLogs: Record<string, LogLine[]>;
+  applyResults: ApplyResults;
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
   onApply: () => void;
@@ -1103,6 +1198,8 @@ function SyncPage({
           </div>
         ) : null}
       </Card>
+
+      <AppliedPanel data={applyResults} />
     </div>
   );
 }
@@ -1293,6 +1390,7 @@ function loadInitialPage(): Page {
 export default function App() {
   const { snapshot, desktop, refresh } = useSnapshot();
   const review = useReviewRows();
+  const applyResults = useApplyResults();
   const [page, setPage] = useState<Page>(loadInitialPage);
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
@@ -1450,6 +1548,7 @@ export default function App() {
       });
       await refresh();
       await review.refresh();
+      await applyResults.refresh();
     } catch (error) {
       setApplyCommand({
         running: false,
@@ -1457,6 +1556,7 @@ export default function App() {
         ok: false,
         finishedAt: Date.now()
       });
+      void applyResults.refresh();
     }
   }
 
@@ -1585,6 +1685,7 @@ export default function App() {
               applySteps={applySteps}
               syncLogs={syncLogs}
               applyLogs={applyLogs}
+              applyResults={applyResults.data}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
               onApply={applySafePayloads}

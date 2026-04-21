@@ -547,6 +547,56 @@ fn read_review_rows<R: Runtime>(handle: AppHandle<R>) -> Result<String, String> 
 }
 
 #[tauri::command]
+fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    let root = ensure_runtime_seeded(&handle)?;
+    let dir = root.join("exports").join("apply_safe");
+    if !dir.exists() {
+        return Ok(json!({ "runId": null, "modifiedUnix": null, "items": [] }));
+    }
+    let mut latest: Option<(PathBuf, SystemTime)> = None;
+    let entries = fs::read_dir(&dir).map_err(|error| error.to_string())?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.ends_with("_result.json"))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(UNIX_EPOCH);
+        if latest.as_ref().map_or(true, |(_, best)| modified > *best) {
+            latest = Some((path, modified));
+        }
+    }
+    let Some((path, modified)) = latest else {
+        return Ok(json!({ "runId": null, "modifiedUnix": null, "items": [] }));
+    };
+    let contents = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let items: Value = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
+    let run_id = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.trim_end_matches("_result").to_string());
+    let modified_unix = modified
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    Ok(json!({
+        "runId": run_id,
+        "modifiedUnix": modified_unix,
+        "items": items,
+    }))
+}
+
+#[tauri::command]
 async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -610,6 +660,7 @@ fn main() {
             run_sync_task,
             read_mapping,
             read_review_rows,
+            read_apply_results,
             apply_safe_payloads
         ])
         .run(tauri::generate_context!())
