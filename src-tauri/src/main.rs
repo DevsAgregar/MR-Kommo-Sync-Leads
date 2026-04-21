@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod secret_key;
+mod secrets;
+
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::{
@@ -15,7 +18,6 @@ use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Runtime};
 use std::os::windows::process::CommandExt;
 
 const RUNTIME_FILES: &[(&str, &str)] = &[
-    ("resources/runtime/.env", ".env"),
     ("resources/runtime/mirella_pacientes.sqlite3", "mirella_pacientes.sqlite3"),
     ("resources/runtime/mirella_kommo_leads.sqlite3", "mirella_kommo_leads.sqlite3"),
     (
@@ -262,6 +264,14 @@ fn run_backend_command<R: Runtime>(
         .env("PYTHONIOENCODING", "utf-8")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if !is_dev_mode() {
+        let secrets_map = secrets::load(handle)?;
+        for (key, value) in secrets_map {
+            command.env(key, value);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
 

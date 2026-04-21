@@ -14,6 +14,7 @@ tauri-build = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
+aes-gcm = "0.10"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

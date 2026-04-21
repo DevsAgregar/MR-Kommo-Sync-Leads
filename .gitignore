@@ -28,6 +28,7 @@ target/
 src-tauri/target/
 src-tauri/gen/
 src-tauri/resources/
+src-tauri/src/secret_key.rs
 build/desktop_installer/
 
 # Python

@@ -54,7 +54,6 @@ PYINSTALLER_EXCLUDES = [
 ]
 
 RUNTIME_FILES = [
-    (ROOT / ".env", RUNTIME_DIR / ".env"),
     (ROOT / ".env.example", RUNTIME_DIR / ".env.example"),
     (ROOT / "mirella_pacientes.sqlite3", RUNTIME_DIR / "mirella_pacientes.sqlite3"),
     (ROOT / "mirella_kommo_leads.sqlite3", RUNTIME_DIR / "mirella_kommo_leads.sqlite3"),
@@ -158,8 +157,13 @@ def copy_runtime_files() -> None:
     if missing:
         print(f"   Ausentes (ignorados): {', '.join(missing)}")
 
-    if not (RUNTIME_DIR / ".env").exists():
-        print("   AVISO: .env nao encontrado. O instalador sera gerado sem credenciais.")
+
+def encrypt_secrets() -> None:
+    print("== Cifrando segredos (.env -> secrets.enc) ==")
+    script = ROOT / "build_secrets.py"
+    if not script.exists():
+        raise FileNotFoundError(f"build_secrets.py ausente: {script}")
+    run([resolve_command("py.exe", "py"), "-3", str(script)])
 
 
 def _pyinstaller_cmd(
@@ -249,6 +253,7 @@ def _print_summary() -> None:
 def main() -> None:
     prepare_directories()
     copy_runtime_files()
+    encrypt_secrets()
     build_backend()
     build_installer()
     _print_summary()
