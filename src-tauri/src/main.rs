@@ -934,6 +934,43 @@ fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String>
 }
 
 #[tauri::command]
+fn read_safe_payload_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
+    let root = ensure_runtime_seeded(&handle)?;
+    let path = root
+        .join("exports")
+        .join("sync_preview")
+        .join("clinic_kommo_safe_payloads.json");
+    if !path.exists() {
+        return Ok(json!({ "items": [] }));
+    }
+    let contents = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let payloads: Value = serde_json::from_str(&contents).map_err(|error| error.to_string())?;
+    let items = payloads
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    let field_count = row
+                        .get("custom_fields_values")
+                        .and_then(|value| value.as_array())
+                        .map(|values| values.len())
+                        .unwrap_or(0)
+                        + usize::from(row.get("price").is_some());
+                    json!({
+                        "id": row.get("id").cloned().unwrap_or(Value::Null),
+                        "lead_name": row.get("lead_name").cloned().unwrap_or(Value::Null),
+                        "field_count": field_count,
+                        "has_price": row.get("price").is_some(),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Ok(json!({ "items": items }))
+}
+
+#[tauri::command]
 async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -1007,6 +1044,7 @@ fn main() {
             read_mapping,
             read_review_rows,
             read_apply_results,
+            read_safe_payload_preview,
             apply_safe_payloads
         ])
         .run(tauri::generate_context!())

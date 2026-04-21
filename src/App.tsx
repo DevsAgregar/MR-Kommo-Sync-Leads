@@ -310,6 +310,65 @@ type ApplyResults = {
   items: ApplyResultItem[];
 };
 
+type SafePayloadPreviewItem = {
+  id: number;
+  lead_name?: string | null;
+  field_count: number;
+  has_price: boolean;
+};
+
+type SafePayloadPreview = {
+  items: SafePayloadPreviewItem[];
+};
+
+function SafePreviewPanel({ data }: { data: SafePayloadPreview }) {
+  const [expanded, setExpanded] = useState(false);
+  const items = data.items ?? [];
+  if (!items.length) return null;
+  const visible = expanded ? items : items.slice(0, 10);
+  const fieldCount = items.reduce((total, item) => total + (item.field_count || 0), 0);
+  return (
+    <Card className="p-4 md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Pill tone="info" icon={<ClipboardList className="h-3 w-3" />}>Prévia antes de aplicar</Pill>
+          <h3 className="mt-2 text-lg font-semibold text-white">Clientes prontos para enviar ao Kommo</h3>
+          <p className="mt-1 text-xs text-slate-300">
+            {number(items.length)} clientes · {number(fieldCount)} campos preparados · pendências ficam fora
+          </p>
+        </div>
+        {items.length > 10 ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+          >
+            {expanded ? "Mostrar menos" : `Ver todos (${number(items.length)})`}
+          </button>
+        ) : null}
+      </div>
+      <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+        {visible.map((item) => (
+          <li
+            key={item.id}
+            className="flex items-start gap-2 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-2.5 py-1.5 text-xs text-cyan-100"
+          >
+            <ClipboardList className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-white">
+                {item.lead_name || `Lead ${item.id}`}
+              </p>
+              <p className="truncate text-[10px] text-slate-400">
+                id {item.id} · {number(item.field_count)} campo(s){item.has_price ? " · inclui Venda" : ""}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 function useApplyResults() {
   const [data, setData] = useState<ApplyResults>({ runId: null, modifiedUnix: null, items: [] });
 
@@ -319,6 +378,25 @@ function useApplyResults() {
       setData(result ?? { runId: null, modifiedUnix: null, items: [] });
     } catch {
       setData({ runId: null, modifiedUnix: null, items: [] });
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { data, refresh };
+}
+
+function useSafePayloadPreview() {
+  const [data, setData] = useState<SafePayloadPreview>({ items: [] });
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await call<SafePayloadPreview>("read_safe_payload_preview");
+      setData(result ?? { items: [] });
+    } catch {
+      setData({ items: [] });
     }
   }, []);
 
@@ -1028,6 +1106,7 @@ function SyncPage({
   syncLogs,
   applyLogs,
   applyResults,
+  safePayloadPreview,
   onQuickUpdate,
   onFullUpdate,
   onApply,
@@ -1043,6 +1122,7 @@ function SyncPage({
   syncLogs: Record<string, LogLine[]>;
   applyLogs: Record<string, LogLine[]>;
   applyResults: ApplyResults;
+  safePayloadPreview: SafePayloadPreview;
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
   onApply: () => void;
@@ -1139,6 +1219,8 @@ function SyncPage({
           icon={<AlertTriangle className="h-3.5 w-3.5" />}
         />
       </section>
+
+      <SafePreviewPanel data={safePayloadPreview} />
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_1fr]">
         <Card className="p-4 md:p-5">
@@ -1568,6 +1650,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   const { snapshot, desktop, refresh } = useSnapshot();
   const review = useReviewRows();
   const applyResults = useApplyResults();
+  const safePayloadPreview = useSafePayloadPreview();
   const [page, setPage] = useState<Page>(loadInitialPage);
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
@@ -1689,6 +1772,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
       });
       await refresh();
       await review.refresh();
+      await safePayloadPreview.refresh();
     } catch (error) {
       setCommand({
         running: false,
@@ -1726,6 +1810,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
       await refresh();
       await review.refresh();
       await applyResults.refresh();
+      await safePayloadPreview.refresh();
     } catch (error) {
       setApplyCommand({
         running: false,
@@ -1872,6 +1957,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
               syncLogs={syncLogs}
               applyLogs={applyLogs}
               applyResults={applyResults.data}
+              safePayloadPreview={safePayloadPreview.data}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
               onApply={applySafePayloads}
