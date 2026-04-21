@@ -19,6 +19,7 @@ import os
 import re
 from db_util import connect as db_connect, sqlite3
 import sys
+import time
 import unicodedata
 from datetime import datetime
 from io import BytesIO
@@ -39,6 +40,9 @@ BASE_URL = "https://app2.clinicaagil.com.br"
 RUNTIME_ROOT = runtime_root()
 DEFAULT_ENV_FILE = default_env_file()
 DEFAULT_TIMEOUT = 60
+DEFAULT_HTTP_MAX_ATTEMPTS = 4
+DEFAULT_HTTP_BACKOFF_BASE_SECONDS = 2
+DEFAULT_HTTP_BACKOFF_MAX_SECONDS = 20
 DEFAULT_EMAIL = ""
 DEFAULT_SENHA = ""
 DEFAULT_DATA_VENDAS = "01/01/1900"
@@ -1448,6 +1452,9 @@ class ClinicaAgilHTTPExporter:
         self.timeout = timeout
         self.output_dir = Path(output_dir)
         self.logger = logger
+        self.max_attempts = env_int("MIRELLA_HTTP_MAX_ATTEMPTS", DEFAULT_HTTP_MAX_ATTEMPTS)
+        self.backoff_base_seconds = env_int("MIRELLA_HTTP_BACKOFF_BASE_SECONDS", DEFAULT_HTTP_BACKOFF_BASE_SECONDS)
+        self.backoff_max_seconds = env_int("MIRELLA_HTTP_BACKOFF_MAX_SECONDS", DEFAULT_HTTP_BACKOFF_MAX_SECONDS)
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -1459,30 +1466,84 @@ class ClinicaAgilHTTPExporter:
             }
         )
 
+    def _delay_for_attempt(self, attempt: int) -> int:
+        delay = self.backoff_base_seconds * (2 ** max(0, attempt - 1))
+        return min(self.backoff_max_seconds, delay)
+
+    def _request_with_backoff(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+        last_error: Optional[Exception] = None
+        last_response: Optional[requests.Response] = None
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+                if response.status_code == 429 and attempt < self.max_attempts:
+                    delay = self._delay_for_attempt(attempt)
+                    self.logger.warning(
+                        "HTTP 429 em %s %s. Aguardando %ss antes da tentativa %s/%s.",
+                        method,
+                        url,
+                        delay,
+                        attempt + 1,
+                        self.max_attempts,
+                    )
+                    time.sleep(delay)
+                    last_response = response
+                    continue
+                return response
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= self.max_attempts:
+                    break
+                delay = self._delay_for_attempt(attempt)
+                self.logger.warning(
+                    "Falha HTTP em %s %s: %s. Aguardando %ss antes da tentativa %s/%s.",
+                    method,
+                    url,
+                    exc,
+                    delay,
+                    attempt + 1,
+                    self.max_attempts,
+                )
+                time.sleep(delay)
+
+        if last_error is not None:
+            raise RuntimeError(f"Falha HTTP apos {self.max_attempts} tentativas: {method} {url} -> {last_error}") from last_error
+        if last_response is not None:
+            return last_response
+        raise RuntimeError(f"Falha HTTP sem resposta apos {self.max_attempts} tentativas: {method} {url}")
+
     def autenticar(self, cookie_env: Optional[str] = None) -> None:
         if cookie_env:
             self.logger.info("Autenticacao: usando cookie de sessao informado.")
             self.session.headers["Cookie"] = cookie_env
-            resposta = self.session.get(
+            resposta = self._request_with_backoff(
+                "GET",
                 f"{BASE_URL}{LOGIN_CONFIG['endpoints']['relatorios']}",
-                timeout=self.timeout,
             )
             if resposta.status_code == 200:
                 return
             raise RuntimeError(f"Cookie de sessao invalido. HTTP {resposta.status_code}")
 
         self.logger.info("Autenticacao: fazendo login por HTTP.")
-        resposta_login = self.session.post(
+        resposta_login = self._request_with_backoff(
+            "POST",
             f"{BASE_URL}{LOGIN_CONFIG['endpoints']['login']}",
             data={"identity": self.email, "password": self.senha},
-            timeout=self.timeout,
         )
         if resposta_login.status_code not in (200, 302):
+            if self.max_attempts > 1:
+                delay = self._delay_for_attempt(self.max_attempts)
+                self.logger.warning(
+                    "Login rejeitado com HTTP %s. Aplicando atraso final de %ss para amortecer tentativas repetidas.",
+                    resposta_login.status_code,
+                    delay,
+                )
+                time.sleep(delay)
             raise RuntimeError(f"Falha no login. HTTP {resposta_login.status_code}")
 
-        resposta_relatorios = self.session.get(
+        resposta_relatorios = self._request_with_backoff(
+            "GET",
             f"{BASE_URL}{LOGIN_CONFIG['endpoints']['relatorios']}",
-            timeout=self.timeout,
         )
         if resposta_relatorios.status_code != 200:
             raise RuntimeError(
@@ -1493,7 +1554,7 @@ class ClinicaAgilHTTPExporter:
 
     def _post_excel(self, endpoint: str, payload: Dict[str, str], nome: str) -> bytes:
         self.logger.info("Solicitando '%s' via HTTP...", nome)
-        resposta = self.session.post(f"{BASE_URL}{endpoint}", data=payload, timeout=self.timeout)
+        resposta = self._request_with_backoff("POST", f"{BASE_URL}{endpoint}", data=payload)
         _garantir_resposta_excel(resposta, endpoint)
         self.logger.info("Arquivo '%s' recebido (%.1f KB).", nome, len(resposta.content) / 1024.0)
         return resposta.content

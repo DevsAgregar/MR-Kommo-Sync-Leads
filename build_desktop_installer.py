@@ -10,6 +10,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import argparse
 from pathlib import Path
 
 
@@ -199,8 +200,35 @@ def _pyinstaller_cmd(
     return cmd
 
 
-def build_backend() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Build do instalador desktop do Mirella Kommo Sync.")
+    parser.add_argument(
+        "--with-pyarmor",
+        action="store_true",
+        help="Ofusca os entrypoints Python com PyArmor antes do PyInstaller.",
+    )
+    return parser
+
+
+def _prepare_script_for_packaging(script_path: Path, exe_name: str, use_pyarmor: bool) -> Path:
+    if not use_pyarmor:
+        return script_path
+    pyarmor = resolve_command("pyarmor.exe", "pyarmor")
+    output_dir = BUILD_DIR / "pyarmor" / exe_name
+    if output_dir.exists():
+        shutil.rmtree(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run([pyarmor, "gen", "-O", str(output_dir), str(script_path)])
+    obfuscated_script = output_dir / script_path.name
+    if not obfuscated_script.exists():
+        raise FileNotFoundError(f"PyArmor nao gerou script ofuscado: {obfuscated_script}")
+    return obfuscated_script
+
+
+def build_backend(use_pyarmor: bool) -> None:
     print("== Empacotando backend Python (PyInstaller) ==")
+    if use_pyarmor:
+        print("   PyArmor: habilitado")
     dist_dir = BUILD_DIR / "backend_dist"
     work_dir = BUILD_DIR / "backend_work"
     spec_dir = BUILD_DIR / "backend_spec"
@@ -212,8 +240,9 @@ def build_backend() -> None:
         if not script_path.exists():
             raise FileNotFoundError(f"Script backend ausente: {script_path}")
         exe_name = script_path.stem
+        packaging_script = _prepare_script_for_packaging(script_path, exe_name, use_pyarmor)
         cmd = _pyinstaller_cmd(
-            script_path,
+            packaging_script,
             exe_name,
             dist_dir,
             work_dir / exe_name,
@@ -251,10 +280,11 @@ def _print_summary() -> None:
 
 
 def main() -> None:
+    args = build_parser().parse_args()
     prepare_directories()
     copy_runtime_files()
     encrypt_secrets()
-    build_backend()
+    build_backend(use_pyarmor=args.with_pyarmor)
     build_installer()
     _print_summary()
 
