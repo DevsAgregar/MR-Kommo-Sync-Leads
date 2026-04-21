@@ -410,8 +410,15 @@ export default function App() {
 
   async function handleLogin(username: string, password: string) {
     setAuthError("");
-    const state = await call<AuthState>("login_app", { username, password });
-    setAuth(state);
+    try {
+      const state = await call<AuthState>("login_app", { username, password });
+      setAuth(state);
+      setAuthError("");
+    } catch (error) {
+      setAuthError(String(error));
+      setAuth({ required: true, authenticated: false, gistConfigured: auth?.gistConfigured ?? true });
+      throw error;
+    }
   }
 
   async function handleLogout() {
@@ -1462,6 +1469,8 @@ function LoginScreen({
     setSubmitting(true);
     try {
       await onLogin(username, password);
+    } catch {
+      // Error message is rendered by the parent state.
     } finally {
       setSubmitting(false);
     }

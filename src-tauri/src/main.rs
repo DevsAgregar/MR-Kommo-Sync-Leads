@@ -624,7 +624,8 @@ fn login_app<R: Runtime>(handle: AppHandle<R>, username: String, password: Strin
     }
 
     let username_input = username.trim();
-    let password_hash = sha256_hex(&password);
+    let password_input = password.trim();
+    let password_hash = sha256_hex(password_input);
     let matched = gist_config.users.iter().any(|user| {
         user.username == username_input
             && (
@@ -632,7 +633,7 @@ fn login_app<R: Runtime>(handle: AppHandle<R>, username: String, password: Strin
                     .as_ref()
                     .map(|hash| hash.eq_ignore_ascii_case(&password_hash))
                     .unwrap_or(false)
-                || user.password.as_deref() == Some(password.as_str())
+                || user.password.as_deref() == Some(password_input)
             )
     });
 
