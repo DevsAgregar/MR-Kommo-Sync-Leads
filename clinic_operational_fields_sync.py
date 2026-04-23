@@ -6,24 +6,105 @@ import concurrent.futures
 import json
 import logging
 import os
+import random
 import re
+import time
 from db_util import connect as db_connect, sqlite3
 import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, TypeVar
 from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.exceptions import ProtocolError
+from urllib3.util.retry import Retry
 from env_config import load_env_file
 
 from login import BASE_URL, DEFAULT_DB_PATH, DEFAULT_EMAIL, DEFAULT_ENV_FILE, DEFAULT_SENHA
 
 
-DEFAULT_TIMEOUT = 60
+# 30s e suficiente para uma pagina de paciente e libera o slot do worker mais
+# cedo quando o socket virou zumbi (antes ficava ate 60s preso antes de o OS
+# notar o RST do servidor).
+DEFAULT_TIMEOUT = 30
 DEFAULT_WORKERS = 4
+# Retries sao aplicados em duas camadas:
+#   1) urllib3.Retry no HTTPAdapter -> cobre falha ao estabelecer a conexao e
+#      respostas 5xx. NAO cobre SSLEOFError que ocorre depois que os headers
+#      ja comecaram a chegar (leitura do body), que e o nosso caso comum.
+#   2) _request_with_retry na camada de aplicacao -> refaz a chamada inteira
+#      com backoff exponencial + jitter em SSLError/ConnectionError/Timeout.
+# Juntas evitam que uma desconexao pontual do servidor derrube um paciente.
+_REQUEST_MAX_ATTEMPTS = 4
+_REQUEST_BACKOFF_BASE = 0.8
+_REQUEST_BACKOFF_CAP = 8.0
+
+_T = TypeVar("_T")
+
+_TRANSIENT_EXC = (
+    requests.exceptions.SSLError,
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+    ProtocolError,
+)
+
+
+def _build_retry_adapter() -> HTTPAdapter:
+    """HTTPAdapter com retry no handshake/conexao. Nao cobre SSL no meio da
+    resposta (leitura do body) -- para isso ver _request_with_retry."""
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=0,  # read-retry aqui e perigoso (pode reenviar POST); deixamos na camada de app.
+        status=3,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(("GET", "POST")),
+        backoff_factor=0.6,
+        raise_on_status=False,
+        respect_retry_after_header=True,
+    )
+    return HTTPAdapter(max_retries=retry, pool_connections=8, pool_maxsize=8)
+
+
+def _request_with_retry(
+    logger: logging.Logger,
+    label: str,
+    fn: Callable[[], _T],
+) -> _T:
+    """Executa `fn` com retry exponencial + jitter em falhas transitorias.
+
+    O servidor da Clinica Agil fecha TLS abruptamente de forma esparsa (LB /
+    KeepAlive). Sem retry, um paciente inteiro e perdido por uma unica
+    desconexao. Aqui refazemos ate _REQUEST_MAX_ATTEMPTS com espera crescente,
+    o que cobre tanto RemoteDisconnected quanto SSL: UNEXPECTED_EOF_WHILE_READING.
+    """
+    last_exc: Optional[BaseException] = None
+    for attempt in range(1, _REQUEST_MAX_ATTEMPTS + 1):
+        try:
+            return fn()
+        except _TRANSIENT_EXC as exc:
+            last_exc = exc
+            if attempt == _REQUEST_MAX_ATTEMPTS:
+                break
+            # backoff exponencial com jitter para evitar sincronia entre workers
+            wait = min(_REQUEST_BACKOFF_CAP, _REQUEST_BACKOFF_BASE * (2 ** (attempt - 1)))
+            wait += random.uniform(0, wait * 0.25)
+            logger.debug(
+                "Retry %s/%s em %.2fs apos %s: %s",
+                attempt,
+                _REQUEST_MAX_ATTEMPTS - 1,
+                wait,
+                label,
+                exc.__class__.__name__,
+            )
+            time.sleep(wait)
+    assert last_exc is not None
+    raise last_exc
 DEFAULT_KOMMO_DB_PATH = Path("mirella_kommo_leads.sqlite3")
 TIMELINE_BLOCKED_STATUSES = {
     "bloqueado",
@@ -115,6 +196,12 @@ class ClinicaAgilOperationalExtractor:
                 )
             }
         )
+        # Adapter com retry no nivel urllib3 para falhas de conexao/5xx.
+        # Read-retry fica desabilitado aqui porque o urllib3 reenviaria POSTs
+        # tambem; a camada de retry de leitura ficou em _request_with_retry.
+        adapter = _build_retry_adapter()
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def login(self) -> None:
         response = self.session.post(
@@ -146,27 +233,41 @@ class ClinicaAgilOperationalExtractor:
         return instance
 
     def get_patient_edit_html(self, patient_id: int) -> str:
-        response = self.session.get(f"{BASE_URL}/pacientes/editar/{patient_id}", timeout=self.timeout)
-        response.raise_for_status()
-        return response.text
+        def _do() -> str:
+            response = self.session.get(
+                f"{BASE_URL}/pacientes/editar/{patient_id}", timeout=self.timeout
+            )
+            response.raise_for_status()
+            return response.text
+
+        return _request_with_retry(self.logger, f"edit/{patient_id}", _do)
 
     def get_patient_agendamentos_html(self, patient_id: int) -> str:
-        response = self.session.get(f"{BASE_URL}/pacientes/visualizar/{patient_id}/agendamentos", timeout=self.timeout)
-        response.raise_for_status()
-        return response.text
+        def _do() -> str:
+            response = self.session.get(
+                f"{BASE_URL}/pacientes/visualizar/{patient_id}/agendamentos",
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.text
+
+        return _request_with_retry(self.logger, f"agendamentos/{patient_id}", _do)
 
     def get_agenda_event(self, agenda_id: int) -> Dict[str, Any]:
-        response = self.session.post(
-            f"{BASE_URL}/agenda/busca_evento",
-            data={"id": str(agenda_id)},
-            headers={
-                "X-Requested-With": "XMLHttpRequest",
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-            },
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-        return response.json()
+        def _do() -> Dict[str, Any]:
+            response = self.session.post(
+                f"{BASE_URL}/agenda/busca_evento",
+                data={"id": str(agenda_id)},
+                headers={
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Accept": "application/json, text/javascript, */*; q=0.01",
+                },
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        return _request_with_retry(self.logger, f"agenda/{agenda_id}", _do)
 
 
 def _extract_origin(edit_html: str) -> Optional[str]:
