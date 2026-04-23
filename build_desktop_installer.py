@@ -53,18 +53,19 @@ PYINSTALLER_EXCLUDES = [
     "matplotlib",
     "scipy",
     # Extras pesados que nenhum dos entrypoints importa.
+    # IMPORTANTE: nao adicionar aqui "html" (usado por bs4.dammit),
+    # "multiprocessing" (importado por concurrent.futures.__init__ mesmo
+    # quando usamos apenas ThreadPoolExecutor) nem "zoneinfo" (risco com
+    # libs de timezone em stdlib >=3.9).
     "lib2to3",
-    "multiprocessing",
     "xmlrpc",
     "wsgiref",
-    "html",
     "pdb",
     "profile",
     "cProfile",
     "curses",
     "_curses",
     "readline",
-    "zoneinfo",
 ]
 
 RUNTIME_FILES = [
