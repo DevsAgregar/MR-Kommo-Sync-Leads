@@ -26,7 +26,7 @@ import {
   XCircle,
   Zap
 } from "lucide-react";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
 type FieldStat = {
   candidate: number;
@@ -435,13 +435,19 @@ type ApplyHistoryRun = {
 function useApplyHistory() {
   const [runs, setRuns] = useState<ApplyHistoryRun[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // Expor o erro permite que a Historico exiba banner em vez de "lista vazia".
+  // Sem isso, falha de IPC/parse ficava invisivel: loaded=true + runs=[] parece
+  // que o usuario nunca aplicou nada.
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const result = await call<{ runs: ApplyHistoryRun[] }>("read_apply_history", { limit: 50 });
       setRuns(result?.runs ?? []);
-    } catch {
+      setError(null);
+    } catch (err) {
       setRuns([]);
+      setError(err instanceof Error ? err.message : String(err ?? "erro ao carregar histórico"));
     } finally {
       setLoaded(true);
     }
@@ -451,7 +457,7 @@ function useApplyHistory() {
     void refresh();
   }, [refresh]);
 
-  return { runs, loaded, refresh };
+  return { runs, loaded, error, refresh };
 }
 
 function useSafePayloadPreview() {
@@ -537,6 +543,28 @@ function formatClock(unixSeconds?: number | null) {
     return null;
   }
 }
+
+// Subcomponente isolado que absorve o re-render de 1Hz do countdown para que o
+// AutomationCard inteiro (que tem gradient, animate-ping etc.) nao reconstrua
+// a cada segundo enquanto o usuario esta olhando a tela ociosa.
+const NextRunLabel = React.memo(function NextRunLabel({
+  running,
+  enabled,
+  nextClock,
+  targetUnix
+}: {
+  running: boolean;
+  enabled: boolean;
+  nextClock: string | null;
+  targetUnix?: number | null;
+}) {
+  const countdown = useCountdown(enabled && !running ? targetUnix ?? null : null);
+  if (running) return <>—</>;
+  if (enabled && nextClock) {
+    return <>{`${nextClock}${countdown ? ` · ${countdown}` : ""}`}</>;
+  }
+  return <>sem agendamento</>;
+});
 
 function useCountdown(targetUnix?: number | null) {
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
@@ -779,9 +807,12 @@ function ProcessTracker({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    const running = steps.find((s) => s.status === "running");
-    if (running) {
-      setExpanded((prev) => (prev[running.label] ? prev : { ...prev, [running.label]: true }));
+    // Renomeado para nao sombrear a prop `running` deste componente.
+    const runningStep = steps.find((s) => s.status === "running");
+    if (runningStep) {
+      setExpanded((prev) =>
+        prev[runningStep.label] ? prev : { ...prev, [runningStep.label]: true }
+      );
     }
   }, [steps]);
 
@@ -1246,7 +1277,7 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
   );
 }
 
-function AutomationCard({
+const AutomationCard = React.memo(function AutomationCard({
   state,
   available,
   desktop,
@@ -1263,7 +1294,8 @@ function AutomationCard({
 }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [pending, setPending] = useState<"toggle" | "interval" | "now" | null>(null);
-  const countdown = useCountdown(state.enabled && !state.running ? state.nextRunUnix : null);
+  // countdown agora mora dentro de <NextRunLabel/> para nao forcar rerender no
+  // pai a cada segundo.
   const nextClock = formatClock(state.nextRunUnix);
   const lastClock = formatClock(state.lastRunUnix);
 
@@ -1416,11 +1448,12 @@ function AutomationCard({
         <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
           <p className="text-[11px] font-medium text-slate-400">Próxima execução</p>
           <p className="mt-1 text-sm font-semibold text-white">
-            {state.running
-              ? "—"
-              : state.enabled && nextClock
-                ? `${nextClock}${countdown ? ` · ${countdown}` : ""}`
-                : "sem agendamento"}
+            <NextRunLabel
+              running={state.running}
+              enabled={state.enabled}
+              nextClock={nextClock}
+              targetUnix={state.nextRunUnix}
+            />
           </p>
         </div>
         <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
@@ -1471,7 +1504,7 @@ function AutomationCard({
       ) : null}
     </Card>
   );
-}
+});
 
 function SyncPage({
   snapshot,
@@ -1758,16 +1791,22 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   const service = stats.service;
   const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
   const [query, setQuery] = useState("");
+  // Em listas grandes, filtrar a cada tecla trava a UI em maquinas fracas.
+  // useDeferredValue adia o filtro para uma atualizacao de baixa prioridade,
+  // mantendo o input responsivo.
+  const deferredQuery = useDeferredValue(query);
 
   const filtered = useMemo(() => {
-    const term = query.trim().toLowerCase();
+    const term = deferredQuery.trim().toLowerCase();
     if (!term) return rows;
     return rows.filter((row) =>
       [row.patient_name, row.lead_name, row.field_label, row.candidate_value, row.mapped_value]
         .filter(Boolean)
         .some((value) => value.toLowerCase().includes(term))
     );
-  }, [rows, query]);
+  }, [rows, deferredQuery]);
+  // A lista renderizada tambem e memoizada para nao recalcular slice+map no redraw.
+  const visibleRows = useMemo(() => filtered.slice(0, 120), [filtered]);
 
   return (
     <div className="space-y-4">
@@ -1817,7 +1856,7 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5">
-                {filtered.slice(0, 120).map((row, index) => (
+                {visibleRows.map((row, index) => (
                   <tr
                     key={`${row.patient_name}-${row.field_label}-${index}`}
                     className={cx(
@@ -1946,7 +1985,7 @@ function formatRunStamp(run: ApplyHistoryRun): string {
   });
 }
 
-function HistoryRunCard({
+const HistoryRunCard = React.memo(function HistoryRunCard({
   run,
   filter,
   expandedInitially
@@ -1956,13 +1995,16 @@ function HistoryRunCard({
   expandedInitially: boolean;
 }) {
   const [expanded, setExpanded] = useState(expandedInitially);
-  const stamp = formatRunStamp(run);
+  // Memoizamos stamp e filteredItems porque, em uma lista de 50 runs,
+  // cada keystroke dispararia 50 x split/parse/filter sem memoizacao.
+  const stamp = useMemo(() => formatRunStamp(run), [run.runId, run.modifiedUnix]);
   const term = filter.trim().toLowerCase();
-  const filteredItems = term
-    ? run.items.filter((item) =>
-        (item.leadName ?? `lead ${item.id}`).toLowerCase().includes(term)
-      )
-    : run.items;
+  const filteredItems = useMemo(() => {
+    if (!term) return run.items;
+    return run.items.filter((item) =>
+      (item.leadName ?? `lead ${item.id}`).toLowerCase().includes(term)
+    );
+  }, [run.items, term]);
   if (term && filteredItems.length === 0) return null;
   const visible = expanded ? filteredItems : filteredItems.slice(0, 8);
   return (
@@ -2032,19 +2074,24 @@ function HistoryRunCard({
       </ul>
     </Card>
   );
-}
+});
 
 function HistoryPage({
   runs,
   loaded,
+  error,
   onRefresh
 }: {
   runs: ApplyHistoryRun[];
   loaded: boolean;
+  error: string | null;
   onRefresh: () => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  // Em historicos grandes, filtrar pacientes a cada tecla custa caro.
+  // useDeferredValue mantem o input responsivo e adia o filtro.
+  const deferredQuery = useDeferredValue(query);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -2055,9 +2102,18 @@ function HistoryPage({
     }
   };
 
-  const totalLeads = runs.reduce((sum, run) => sum + run.okCount, 0);
-  const totalErrors = runs.reduce((sum, run) => sum + run.errCount, 0);
-  const lastStamp = runs.length ? formatRunStamp(runs[0]) : null;
+  const totals = useMemo(() => {
+    let leads = 0;
+    let errors = 0;
+    for (const run of runs) {
+      leads += run.okCount;
+      errors += run.errCount;
+    }
+    return { leads, errors };
+  }, [runs]);
+  const totalLeads = totals.leads;
+  const totalErrors = totals.errors;
+  const lastStamp = useMemo(() => (runs.length ? formatRunStamp(runs[0]) : null), [runs]);
 
   return (
     <div className="space-y-4">
@@ -2143,6 +2199,18 @@ function HistoryPage({
         </div>
       </Card>
 
+      {error ? (
+        <Card className="border-rose-400/40 bg-rose-500/10 p-4 text-xs text-rose-100">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" aria-hidden />
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-rose-100">Não foi possível carregar o histórico</p>
+              <p className="mt-1 text-[11px] leading-5 text-rose-200/90">{error}</p>
+            </div>
+          </div>
+        </Card>
+      ) : null}
+
       {!loaded ? (
         <Card className="p-6 text-center text-xs text-slate-400">
           <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-500" />
@@ -2160,8 +2228,8 @@ function HistoryPage({
             <HistoryRunCard
               key={run.runId}
               run={run}
-              filter={query}
-              expandedInitially={index === 0 && !query}
+              filter={deferredQuery}
+              expandedInitially={index === 0 && !deferredQuery}
             />
           ))}
         </div>
@@ -2322,9 +2390,54 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
     prevSchedulerRunning.current = schedulerRunning;
   }, [schedulerRunning, refresh, review, applyResults, safePayloadPreview, applyHistory]);
 
+  // Em scripts Python "verbose", cada linha de stdout vira um evento process-log.
+  // Antes faziamos 1 setState por linha -> centenas de re-renders/seg em
+  // maquina fraca. Agora acumulamos em um ref e descarregamos uma vez por frame
+  // com requestAnimationFrame: no maximo 60 setStates/seg, a UI continua fluida.
+  const pendingLogsRef = useRef<{ sync: Record<string, LogLine[]>; apply: Record<string, LogLine[]> }>({
+    sync: {},
+    apply: {}
+  });
+  const flushScheduledRef = useRef(false);
+
   useEffect(() => {
     let disposed = false;
     const unsubs: Array<() => void> = [];
+
+    const mergeLogs = (prev: Record<string, LogLine[]>, bucket: Record<string, LogLine[]>) => {
+      const next = { ...prev };
+      for (const step of Object.keys(bucket)) {
+        const lines = bucket[step];
+        if (!lines || lines.length === 0) continue;
+        const existing = next[step] ?? [];
+        const appended = existing.length === 0 ? lines.slice() : existing.concat(lines);
+        next[step] = appended.length > LOG_BUFFER_SIZE ? appended.slice(-LOG_BUFFER_SIZE) : appended;
+      }
+      return next;
+    };
+
+    const flushLogs = () => {
+      flushScheduledRef.current = false;
+      if (disposed) return;
+      const pending = pendingLogsRef.current;
+      pendingLogsRef.current = { sync: {}, apply: {} };
+      if (Object.keys(pending.sync).length > 0) {
+        setSyncLogs((prev) => mergeLogs(prev, pending.sync));
+      }
+      if (Object.keys(pending.apply).length > 0) {
+        setApplyLogs((prev) => mergeLogs(prev, pending.apply));
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (flushScheduledRef.current) return;
+      flushScheduledRef.current = true;
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(flushLogs);
+      } else {
+        setTimeout(flushLogs, 16);
+      }
+    };
 
     void listen<ProgressEvent>("process-progress", (event) => {
       if (disposed) return;
@@ -2372,13 +2485,10 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
     void listen<LogEvent>("process-log", (event) => {
       if (disposed) return;
       const payload = event.payload;
-      const setLogs = payload.flow === "apply" ? setApplyLogs : setSyncLogs;
-      setLogs((prev) => {
-        const existing = prev[payload.step] ?? [];
-        const appended = [...existing, { stream: payload.stream, line: payload.line, tsMs: payload.tsMs }];
-        const trimmed = appended.length > LOG_BUFFER_SIZE ? appended.slice(-LOG_BUFFER_SIZE) : appended;
-        return { ...prev, [payload.step]: trimmed };
-      });
+      const bucket = payload.flow === "apply" ? pendingLogsRef.current.apply : pendingLogsRef.current.sync;
+      const arr = (bucket[payload.step] ??= []);
+      arr.push({ stream: payload.stream, line: payload.line, tsMs: payload.tsMs });
+      scheduleFlush();
     }).then((fn) => {
       if (disposed) fn();
       else unsubs.push(fn);
@@ -2647,6 +2757,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
             <HistoryPage
               runs={applyHistory.runs}
               loaded={applyHistory.loaded}
+              error={applyHistory.error}
               onRefresh={applyHistory.refresh}
             />
           )}

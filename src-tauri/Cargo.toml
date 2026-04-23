@@ -20,3 +20,13 @@ sha2 = "0.10"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+# Optimizations tuned for distribution on modest Windows machines.
+# Reduce binary size and runtime overhead at the cost of longer compile time.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+incremental = false

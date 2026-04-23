@@ -115,6 +115,35 @@ a:focus-visible,
   z-index: 0;
 }
 
+/*
+ * Em maquinas com GPU integrada (ex.: Intel HD 4000) a animacao shimmer com
+ * mask-composite + keyframe infinito chegava a consumir 5-10% de CPU ocioso.
+ * Honrar prefers-reduced-motion: desligamos animacoes repetidas e os spinners,
+ * e trocamos backdrop-filter (composicao cara) por cor solida semi-transparente.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .shimmer-border::before {
+    animation: none;
+  }
+  .pulse-dot::after {
+    animation: none;
+    opacity: 0.25;
+  }
+  .fade-in {
+    animation: none;
+  }
+  .animate-ping,
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
+  }
+  .surface,
+  .surface-raised {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 @keyframes pulse-dot {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.6); opacity: 0.35; }
@@ -132,6 +161,16 @@ a:focus-visible,
 
 .fade-in {
   animation: fade-in 320ms ease-out both;
+}
+
+/*
+ * Spinners do Tailwind (animate-spin) e pontinhos animate-ping rodam transform
+ * continuamente. Dar will-change: transform promove a uma camada de composicao,
+ * evitando repaint do card pai e reduzindo jank em GPU fraca.
+ */
+.animate-spin,
+.animate-ping {
+  will-change: transform;
 }
 
 @keyframes fade-in {

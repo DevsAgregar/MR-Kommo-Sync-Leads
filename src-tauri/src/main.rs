@@ -147,6 +147,14 @@ static AUTH_SESSION: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
 static ACTIVE_CHILDREN: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
 static SCHEDULER: OnceLock<Arc<(Mutex<SchedulerRuntime>, Condvar)>> = OnceLock::new();
 static PIPELINE_BUSY: OnceLock<AtomicBool> = OnceLock::new();
+// Cache de historico: path -> (modified_unix, payload ja no formato da UI).
+// Evita reparsear arquivos de apply_safe a cada abertura da aba Historico,
+// que em HDD com 50+ rodadas chegava a segundos de congelamento.
+static APPLY_HISTORY_CACHE: OnceLock<Mutex<HashMap<PathBuf, (u64, Value)>>> = OnceLock::new();
+
+fn apply_history_cache() -> &'static Mutex<HashMap<PathBuf, (u64, Value)>> {
+    APPLY_HISTORY_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn pipeline_busy_flag() -> &'static AtomicBool {
     PIPELINE_BUSY.get_or_init(|| AtomicBool::new(false))
@@ -530,8 +538,25 @@ fn auth_file_path<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> 
 
 fn read_local_auth_config<R: Runtime>(handle: &AppHandle<R>) -> Result<LocalAuthConfig, String> {
     let path = auth_file_path(handle)?;
-    let text = fs::read_to_string(&path)
-        .map_err(|error| format!("Falha ao ler config de login {}: {}", path.display(), error))?;
+    // Se o arquivo foi apagado/quarentenado pelo antivirus, em vez de travar o
+    // app tratamos como "auth desabilitado": o fluxo continua igual ao modo dev.
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LocalAuthConfig {
+                enabled: false,
+                gist_url: String::new(),
+                gist_file: None,
+            });
+        }
+        Err(err) => {
+            return Err(format!(
+                "Falha ao ler config de login {}: {}",
+                path.display(),
+                err
+            ));
+        }
+    };
     let config: LocalAuthFile = serde_json::from_str(&text)
         .map_err(|error| format!("Config de login invalida {}: {}", path.display(), error))?;
     Ok(config.auth)
@@ -1026,10 +1051,11 @@ fn scheduler_run_now<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> 
     Ok(scheduler_snapshot())
 }
 
-#[tauri::command]
-fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
-    ensure_authenticated(&handle)?;
-    let root = ensure_runtime_seeded(&handle)?;
+// Versao sincrona reutilizada pelos comandos que ja rodam em spawn_blocking
+// (run_preview, apply_safe_payloads, etc.). NAO exportada via invoke_handler.
+fn build_dashboard_snapshot<R: Runtime>(handle: &AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(handle)?;
+    let root = ensure_runtime_seeded(handle)?;
     let preview_dir = root.join("exports").join("sync_preview");
     let summary_path = preview_dir.join("clinic_kommo_preview_summary.json");
     let safe_payloads_path = preview_dir.join("clinic_kommo_safe_payloads.json");
@@ -1042,7 +1068,7 @@ fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, Str
         .and_then(|value| value.as_array().map(|items| items.len()))
         .unwrap_or(0);
 
-    let snapshot = json!({
+    Ok(json!({
         "repoRoot": root,
         "previewSummary": preview_summary,
         "safePayloadCount": safe_payload_count,
@@ -1061,9 +1087,18 @@ fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, Str
             "reviewRows": file_meta(&review_rows_path),
             "allActions": file_meta(&all_actions_path)
         }
-    });
+    }))
+}
 
-    Ok(snapshot)
+#[tauri::command]
+async fn get_dashboard_snapshot<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    // Em maquinas com HDD/antivirus pesado, ler/parsear summary + contar linhas de
+    // CSV pode bloquear por centenas de ms. Rodamos em uma thread de trabalho
+    // para nao segurar o event loop da UI do Tauri.
+    let worker_handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || build_dashboard_snapshot(&worker_handle))
+        .await
+        .map_err(|err| format!("Erro ao preparar snapshot: {err}"))?
 }
 
 #[tauri::command]
@@ -1105,7 +1140,7 @@ async fn run_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> 
         );
         Ok(json!({
             "stdout": stdout,
-            "snapshot": get_dashboard_snapshot(worker_handle)?
+            "snapshot": build_dashboard_snapshot(&worker_handle)?
         }))
     })
     .await
@@ -1220,7 +1255,7 @@ async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result
         Ok(json!({
             "task": task,
             "logs": logs,
-            "snapshot": get_dashboard_snapshot(worker_handle)?
+            "snapshot": build_dashboard_snapshot(&worker_handle)?
         }))
     })
     .await
@@ -1302,78 +1337,107 @@ fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String>
     }))
 }
 
-#[tauri::command]
-fn read_apply_history<R: Runtime>(
-    handle: AppHandle<R>,
-    limit: Option<usize>,
-) -> Result<Value, String> {
-    ensure_authenticated(&handle)?;
-    let root = ensure_runtime_seeded(&handle)?;
-    let dir = root.join("exports").join("apply_safe");
-    if !dir.exists() {
-        return Ok(json!({ "runs": [] }));
-    }
-    let limit = limit.unwrap_or(50).min(200);
-    let entries = fs::read_dir(&dir).map_err(|error| error.to_string())?;
-    let mut collected: Vec<(String, u64, Value)> = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let file_name = match path.file_name().and_then(|name| name.to_str()) {
-            Some(name) if name.ends_with("_result.json") => name.to_string(),
-            _ => continue,
-        };
-        let modified_unix = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|duration| duration.as_secs())
-            .unwrap_or(0);
-        let contents = match fs::read_to_string(&path) {
-            Ok(text) => text,
-            Err(_) => continue,
-        };
-        let items: Value = match serde_json::from_str(&contents) {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
-        let run_id = file_name.trim_end_matches("_result.json").to_string();
-        collected.push((run_id, modified_unix, items));
-    }
-    collected.sort_by(|a, b| b.1.cmp(&a.1));
-    let runs: Vec<Value> = collected
+fn build_history_run(run_id: String, modified_unix: u64, items: Value) -> Value {
+    let array = items.as_array().cloned().unwrap_or_default();
+    let ok_count = array
+        .iter()
+        .filter(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
+        .count();
+    let total = array.len();
+    let err_count = total.saturating_sub(ok_count);
+    let mapped: Vec<Value> = array
         .into_iter()
-        .take(limit)
-        .map(|(run_id, modified_unix, items)| {
-            let array = items.as_array().cloned().unwrap_or_default();
-            let ok_count = array
-                .iter()
-                .filter(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
-                .count();
-            let total = array.len();
-            let err_count = total.saturating_sub(ok_count);
-            let mapped: Vec<Value> = array
-                .into_iter()
-                .map(|value| {
-                    json!({
-                        "id": value.get("id").cloned().unwrap_or(Value::Null),
-                        "leadName": value.get("lead_name").cloned().unwrap_or(Value::Null),
-                        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
-                        "error": value.get("error").cloned().unwrap_or(Value::Null),
-                    })
-                })
-                .collect();
+        .map(|value| {
             json!({
-                "runId": run_id,
-                "modifiedUnix": modified_unix,
-                "okCount": ok_count,
-                "errCount": err_count,
-                "total": total,
-                "items": mapped,
+                "id": value.get("id").cloned().unwrap_or(Value::Null),
+                "leadName": value.get("lead_name").cloned().unwrap_or(Value::Null),
+                "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+                "error": value.get("error").cloned().unwrap_or(Value::Null),
             })
         })
         .collect();
-    Ok(json!({ "runs": runs }))
+    json!({
+        "runId": run_id,
+        "modifiedUnix": modified_unix,
+        "okCount": ok_count,
+        "errCount": err_count,
+        "total": total,
+        "items": mapped,
+    })
+}
+
+#[tauri::command]
+async fn read_apply_history<R: Runtime>(
+    handle: AppHandle<R>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    let worker_handle = handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        ensure_authenticated(&worker_handle)?;
+        let root = ensure_runtime_seeded(&worker_handle)?;
+        let dir = root.join("exports").join("apply_safe");
+        if !dir.exists() {
+            return Ok(json!({ "runs": [] }));
+        }
+        let limit = limit.unwrap_or(50).min(200);
+        let entries = fs::read_dir(&dir).map_err(|error| error.to_string())?;
+
+        // 1) Listar candidatos (path + mtime) sem ler/parsear nada ainda.
+        let mut candidates: Vec<(PathBuf, String, u64)> = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = match path.file_name().and_then(|name| name.to_str()) {
+                Some(name) if name.ends_with("_result.json") => name.to_string(),
+                _ => continue,
+            };
+            let modified_unix = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            let run_id = file_name.trim_end_matches("_result.json").to_string();
+            candidates.push((path, run_id, modified_unix));
+        }
+
+        // 2) Ordenar desc por mtime e cortar cedo -> so lemos os mais novos.
+        candidates.sort_by(|a, b| b.2.cmp(&a.2));
+        candidates.truncate(limit);
+
+        // 3) Usar cache quando possivel; so le disco se arquivo eh novo ou mudou.
+        let runs: Vec<Value> = {
+            let mut cache = apply_history_cache().lock().map_err(|e| e.to_string())?;
+            // Limpa entradas de arquivos que sumiram para nao vazar memoria.
+            cache.retain(|path, _| candidates.iter().any(|(p, _, _)| p == path));
+
+            let mut out: Vec<Value> = Vec::with_capacity(candidates.len());
+            for (path, run_id, modified_unix) in candidates {
+                if let Some((cached_mtime, cached_value)) = cache.get(&path) {
+                    if *cached_mtime == modified_unix {
+                        out.push(cached_value.clone());
+                        continue;
+                    }
+                }
+                let contents = match fs::read_to_string(&path) {
+                    Ok(text) => text,
+                    Err(_) => continue,
+                };
+                let items: Value = match serde_json::from_str(&contents) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
+                let value = build_history_run(run_id, modified_unix, items);
+                cache.insert(path, (modified_unix, value.clone()));
+                out.push(value);
+            }
+            out
+        };
+
+        Ok::<Value, String>(json!({ "runs": runs }))
+    })
+    .await
+    .map_err(|err| format!("Erro ao ler historico: {err}"))?
 }
 
 #[tauri::command]
@@ -1463,7 +1527,7 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
         );
         Ok(json!({
             "logs": logs,
-            "snapshot": get_dashboard_snapshot(worker_handle)?
+            "snapshot": build_dashboard_snapshot(&worker_handle)?
         }))
     })
     .await

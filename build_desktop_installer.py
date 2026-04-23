@@ -52,13 +52,28 @@ PYINSTALLER_EXCLUDES = [
     "numpy",
     "matplotlib",
     "scipy",
+    # Extras pesados que nenhum dos entrypoints importa.
+    "lib2to3",
+    "multiprocessing",
+    "xmlrpc",
+    "wsgiref",
+    "html",
+    "pdb",
+    "profile",
+    "cProfile",
+    "curses",
+    "_curses",
+    "readline",
+    "zoneinfo",
 ]
 
 RUNTIME_FILES = [
     (ROOT / "config" / "app_auth.json", RUNTIME_DIR / "app_auth.json"),
     (ROOT / ".env.example", RUNTIME_DIR / ".env.example"),
     (ROOT / "mirella_pacientes.sqlite3", RUNTIME_DIR / "mirella_pacientes.sqlite3"),
-    (ROOT / "mirella_kommo_leads.sqlite3", RUNTIME_DIR / "mirella_kommo_leads.sqlite3"),
+    # mirella_kommo_leads.sqlite3 (~124MB) NAO entra no instalador. O primeiro
+    # ciclo de sync o gera via kommo_leads_sqlite.py --sync-mode full, poupando
+    # centenas de MB no instalador final.
     (ROOT / "profiles" / "kommo_state.enc", RUNTIME_DIR / "profiles" / "kommo_state.enc"),
     (
         ROOT / "exports" / "kommo" / "kommo_leads_latest.sql",
