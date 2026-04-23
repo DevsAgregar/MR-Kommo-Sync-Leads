@@ -13,11 +13,19 @@ use std::{
     io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Mutex, OnceLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, OnceLock,
+    },
     thread,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tauri::{path::BaseDirectory, AppHandle, Emitter, Manager, Runtime};
+use tauri::{
+    menu::{MenuBuilder, MenuItemBuilder},
+    path::BaseDirectory,
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Emitter, Manager, Runtime, WindowEvent,
+};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -137,6 +145,90 @@ struct GistAuthUser {
 
 static AUTH_SESSION: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
 static ACTIVE_CHILDREN: OnceLock<Mutex<HashSet<u32>>> = OnceLock::new();
+static SCHEDULER: OnceLock<Arc<(Mutex<SchedulerRuntime>, Condvar)>> = OnceLock::new();
+static PIPELINE_BUSY: OnceLock<AtomicBool> = OnceLock::new();
+
+fn pipeline_busy_flag() -> &'static AtomicBool {
+    PIPELINE_BUSY.get_or_init(|| AtomicBool::new(false))
+}
+
+fn try_acquire_pipeline() -> bool {
+    pipeline_busy_flag()
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+}
+
+fn release_pipeline() {
+    pipeline_busy_flag().store(false, Ordering::Release);
+}
+
+struct PipelineGuard;
+
+impl Drop for PipelineGuard {
+    fn drop(&mut self) {
+        release_pipeline();
+    }
+}
+
+fn acquire_pipeline_guard() -> Result<PipelineGuard, String> {
+    if try_acquire_pipeline() {
+        Ok(PipelineGuard)
+    } else {
+        Err("Outra atualização já está em andamento. Aguarde ela terminar.".to_string())
+    }
+}
+
+const SCHEDULER_MIN_INTERVAL: u64 = 30;
+const SCHEDULER_MAX_INTERVAL: u64 = 240;
+const SCHEDULER_DEFAULT_INTERVAL: u64 = 60;
+
+#[derive(Clone)]
+struct SchedulerRuntime {
+    enabled: bool,
+    interval_minutes: u64,
+    next_run_unix: Option<u64>,
+    last_run_unix: Option<u64>,
+    last_status: SchedulerStatus,
+    last_error: Option<String>,
+    running: bool,
+    paused_reason: Option<String>,
+    force_trigger: bool,
+    shutdown: bool,
+}
+
+impl SchedulerRuntime {
+    fn initial() -> Self {
+        Self {
+            enabled: false,
+            interval_minutes: SCHEDULER_DEFAULT_INTERVAL,
+            next_run_unix: None,
+            last_run_unix: None,
+            last_status: SchedulerStatus::Idle,
+            last_error: None,
+            running: false,
+            paused_reason: None,
+            force_trigger: false,
+            shutdown: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SchedulerStatus {
+    Idle,
+    Ok,
+    Error,
+}
+
+impl SchedulerStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            SchedulerStatus::Idle => "idle",
+            SchedulerStatus::Ok => "ok",
+            SchedulerStatus::Error => "error",
+        }
+    }
+}
 
 fn active_children() -> &'static Mutex<HashSet<u32>> {
     ACTIVE_CHILDREN.get_or_init(|| Mutex::new(HashSet::new()))
@@ -183,6 +275,228 @@ fn kill_active_children() {
         kill_process_tree(pid);
         unregister_child(pid);
     }
+}
+
+fn scheduler() -> &'static Arc<(Mutex<SchedulerRuntime>, Condvar)> {
+    SCHEDULER.get_or_init(|| Arc::new((Mutex::new(SchedulerRuntime::initial()), Condvar::new())))
+}
+
+fn clamp_interval(minutes: u64) -> u64 {
+    minutes
+        .max(SCHEDULER_MIN_INTERVAL)
+        .min(SCHEDULER_MAX_INTERVAL)
+}
+
+fn scheduler_snapshot() -> Value {
+    let (lock, _) = &**scheduler();
+    let state = match lock.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    json!({
+        "enabled": state.enabled,
+        "intervalMinutes": state.interval_minutes,
+        "nextRunUnix": state.next_run_unix,
+        "lastRunUnix": state.last_run_unix,
+        "lastStatus": state.last_status.as_str(),
+        "lastError": state.last_error.clone(),
+        "running": state.running,
+        "pausedReason": state.paused_reason.clone(),
+    })
+}
+
+fn emit_scheduler_state<R: Runtime>(handle: &AppHandle<R>) {
+    let _ = handle.emit("scheduler-state", scheduler_snapshot());
+}
+
+fn update_scheduler<F>(mutate: F)
+where
+    F: FnOnce(&mut SchedulerRuntime),
+{
+    let (lock, cvar) = &**scheduler();
+    let mut state = match lock.lock() {
+        Ok(state) => state,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    mutate(&mut state);
+    cvar.notify_all();
+}
+
+fn scheduler_flow_steps() -> Vec<(&'static str, &'static str, &'static str, &'static str, Vec<&'static str>)>
+{
+    vec![
+        ("sync", "Atualizar Clínica", "login", "login.py", vec!["--sem-input"]),
+        (
+            "sync",
+            "Extrair campos operacionais",
+            "clinic_operational_fields_sync",
+            "clinic_operational_fields_sync.py",
+            vec!["--patient-scope", "matched", "--workers", "4"],
+        ),
+        (
+            "sync",
+            "Atualizar Kommo",
+            "kommo_leads_sqlite",
+            "kommo_leads_sqlite.py",
+            vec!["--sync-mode", "incremental"],
+        ),
+        (
+            "sync",
+            "Gerar prévia",
+            "clinic_kommo_payload_preview",
+            "clinic_kommo_payload_preview.py",
+            vec![],
+        ),
+        (
+            "apply",
+            "Aplicar no Kommo",
+            "apply_kommo_safe_payloads",
+            "apply_kommo_safe_payloads.py",
+            vec!["--apply"],
+        ),
+        (
+            "apply",
+            "Atualizar espelho Kommo",
+            "kommo_leads_sqlite",
+            "kommo_leads_sqlite.py",
+            vec!["--sync-mode", "full"],
+        ),
+        (
+            "apply",
+            "Gerar nova prévia",
+            "clinic_kommo_payload_preview",
+            "clinic_kommo_payload_preview.py",
+            vec![],
+        ),
+    ]
+}
+
+fn run_scheduler_once<R: Runtime>(handle: &AppHandle<R>) -> Result<(), String> {
+    ensure_authenticated(handle)?;
+    let _guard = acquire_pipeline_guard()?;
+    let steps = scheduler_flow_steps();
+    let mut current_flow = "";
+    let mut current_task = "";
+    for (flow, label, executable_name, script_name, args) in steps {
+        let task = if flow == "apply" { "apply" } else { "quick" };
+        if flow != current_flow {
+            current_flow = flow;
+            current_task = task;
+        } else if task != current_task {
+            current_task = task;
+        }
+        emit_progress(handle, flow, task, label, "started", &format!("{label}..."));
+        match run_backend_command(handle, executable_name, script_name, &args, flow, label) {
+            Ok(_) => {
+                emit_progress(
+                    handle,
+                    flow,
+                    task,
+                    label,
+                    "completed",
+                    &format!("{label} concluído."),
+                );
+            }
+            Err(error) => {
+                emit_progress(handle, flow, task, label, "failed", &error);
+                return Err(error);
+            }
+        }
+    }
+    emit_progress(
+        handle,
+        "apply",
+        "apply",
+        "Fluxo finalizado",
+        "done",
+        "Automação concluída com sucesso.",
+    );
+    Ok(())
+}
+
+fn spawn_scheduler_worker<R: Runtime>(handle: AppHandle<R>) {
+    thread::spawn(move || {
+        let sched = scheduler().clone();
+        loop {
+            let (should_run, shutdown) = {
+                let (lock, cvar) = &*sched;
+                let mut state = match lock.lock() {
+                    Ok(state) => state,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                loop {
+                    if state.shutdown {
+                        break (false, true);
+                    }
+                    if state.force_trigger && !state.running {
+                        state.force_trigger = false;
+                        break (true, false);
+                    }
+                    if !state.enabled || state.running {
+                        state = match cvar.wait(state) {
+                            Ok(state) => state,
+                            Err(poisoned) => poisoned.into_inner(),
+                        };
+                        continue;
+                    }
+                    let now = now_secs();
+                    let next = state.next_run_unix.unwrap_or(now);
+                    if next <= now {
+                        break (true, false);
+                    }
+                    let wait = Duration::from_secs(next - now);
+                    let (next_state, _timeout) = match cvar.wait_timeout(state, wait) {
+                        Ok(result) => result,
+                        Err(poisoned) => {
+                            let result = poisoned.into_inner();
+                            (result.0, result.1)
+                        }
+                    };
+                    state = next_state;
+                }
+            };
+
+            if shutdown {
+                break;
+            }
+            if !should_run {
+                continue;
+            }
+
+            update_scheduler(|state| {
+                state.running = true;
+                state.last_error = None;
+                state.last_status = SchedulerStatus::Idle;
+            });
+            emit_scheduler_state(&handle);
+
+            let result = run_scheduler_once(&handle);
+            let finished_at = now_secs();
+            update_scheduler(|state| {
+                state.running = false;
+                state.last_run_unix = Some(finished_at);
+                match &result {
+                    Ok(()) => {
+                        state.last_status = SchedulerStatus::Ok;
+                        state.last_error = None;
+                        let interval = clamp_interval(state.interval_minutes);
+                        state.next_run_unix = Some(finished_at + interval * 60);
+                    }
+                    Err(error) => {
+                        state.last_status = SchedulerStatus::Error;
+                        state.last_error = Some(error.clone());
+                        state.enabled = false;
+                        state.paused_reason = Some(error.clone());
+                        state.next_run_unix = None;
+                    }
+                }
+            });
+            emit_scheduler_state(&handle);
+            if let Err(error) = &result {
+                let _ = handle.emit("scheduler-error", error.clone());
+            }
+        }
+    });
 }
 
 fn now_ms() -> u128 {
@@ -655,7 +969,61 @@ fn logout_app<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     *auth_session()
         .lock()
         .map_err(|_| "Falha ao encerrar sessao autenticada.".to_string())? = None;
+    update_scheduler(|state| {
+        if state.enabled {
+            state.enabled = false;
+            state.paused_reason = Some("Sessão encerrada.".to_string());
+            state.next_run_unix = None;
+        }
+    });
+    emit_scheduler_state(&handle);
     get_auth_state(handle)
+}
+
+#[tauri::command]
+fn get_scheduler_state_cmd<R: Runtime>(_handle: AppHandle<R>) -> Result<Value, String> {
+    Ok(scheduler_snapshot())
+}
+
+#[tauri::command]
+fn set_scheduler_config<R: Runtime>(
+    handle: AppHandle<R>,
+    enabled: bool,
+    interval_minutes: u64,
+) -> Result<Value, String> {
+    if enabled {
+        ensure_authenticated(&handle)?;
+    }
+    let interval = clamp_interval(interval_minutes);
+    update_scheduler(|state| {
+        let was_enabled = state.enabled;
+        state.interval_minutes = interval;
+        state.enabled = enabled;
+        if enabled {
+            state.paused_reason = None;
+            if !was_enabled || state.next_run_unix.is_none() {
+                state.next_run_unix = Some(now_secs() + interval * 60);
+            }
+        } else {
+            state.next_run_unix = None;
+        }
+    });
+    emit_scheduler_state(&handle);
+    Ok(scheduler_snapshot())
+}
+
+#[tauri::command]
+fn scheduler_run_now<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
+    if pipeline_busy_flag().load(Ordering::Acquire) {
+        return Err("Outra atualização já está em andamento. Aguarde ela terminar.".to_string());
+    }
+    update_scheduler(|state| {
+        state.force_trigger = true;
+        state.paused_reason = None;
+    });
+    emit_scheduler_state(&handle);
+    Ok(scheduler_snapshot())
 }
 
 #[tauri::command]
@@ -821,6 +1189,7 @@ async fn run_sync_task<R: Runtime>(handle: AppHandle<R>, task: String) -> Result
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
         ensure_authenticated(&worker_handle)?;
+        let _guard = acquire_pipeline_guard()?;
         let mut logs: Vec<Value> = Vec::new();
         let steps = sync_steps(&task)?;
         for (label, executable_name, script_name, args) in steps {
@@ -934,6 +1303,80 @@ fn read_apply_results<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String>
 }
 
 #[tauri::command]
+fn read_apply_history<R: Runtime>(
+    handle: AppHandle<R>,
+    limit: Option<usize>,
+) -> Result<Value, String> {
+    ensure_authenticated(&handle)?;
+    let root = ensure_runtime_seeded(&handle)?;
+    let dir = root.join("exports").join("apply_safe");
+    if !dir.exists() {
+        return Ok(json!({ "runs": [] }));
+    }
+    let limit = limit.unwrap_or(50).min(200);
+    let entries = fs::read_dir(&dir).map_err(|error| error.to_string())?;
+    let mut collected: Vec<(String, u64, Value)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let file_name = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) if name.ends_with("_result.json") => name.to_string(),
+            _ => continue,
+        };
+        let modified_unix = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let contents = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(_) => continue,
+        };
+        let items: Value = match serde_json::from_str(&contents) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let run_id = file_name.trim_end_matches("_result.json").to_string();
+        collected.push((run_id, modified_unix, items));
+    }
+    collected.sort_by(|a, b| b.1.cmp(&a.1));
+    let runs: Vec<Value> = collected
+        .into_iter()
+        .take(limit)
+        .map(|(run_id, modified_unix, items)| {
+            let array = items.as_array().cloned().unwrap_or_default();
+            let ok_count = array
+                .iter()
+                .filter(|value| value.get("ok").and_then(Value::as_bool).unwrap_or(false))
+                .count();
+            let total = array.len();
+            let err_count = total.saturating_sub(ok_count);
+            let mapped: Vec<Value> = array
+                .into_iter()
+                .map(|value| {
+                    json!({
+                        "id": value.get("id").cloned().unwrap_or(Value::Null),
+                        "leadName": value.get("lead_name").cloned().unwrap_or(Value::Null),
+                        "ok": value.get("ok").and_then(Value::as_bool).unwrap_or(false),
+                        "error": value.get("error").cloned().unwrap_or(Value::Null),
+                    })
+                })
+                .collect();
+            json!({
+                "runId": run_id,
+                "modifiedUnix": modified_unix,
+                "okCount": ok_count,
+                "errCount": err_count,
+                "total": total,
+                "items": mapped,
+            })
+        })
+        .collect();
+    Ok(json!({ "runs": runs }))
+}
+
+#[tauri::command]
 fn read_safe_payload_preview<R: Runtime>(handle: AppHandle<R>) -> Result<Value, String> {
     ensure_authenticated(&handle)?;
     let root = ensure_runtime_seeded(&handle)?;
@@ -975,6 +1418,7 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
     let worker_handle = handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
         ensure_authenticated(&worker_handle)?;
+        let _guard = acquire_pipeline_guard()?;
         let steps = [
             (
                 "Aplicar no Kommo",
@@ -1026,11 +1470,111 @@ async fn apply_safe_payloads<R: Runtime>(handle: AppHandle<R>) -> Result<Value, 
     .map_err(|error| error.to_string())?
 }
 
+fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn quit_application<R: Runtime>(app: &AppHandle<R>) {
+    update_scheduler(|state| {
+        state.enabled = false;
+        state.shutdown = true;
+        state.next_run_unix = None;
+    });
+    kill_active_children();
+    app.exit(0);
+}
+
 fn main() {
     tauri::Builder::default()
-        .on_window_event(|_window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
-                kill_active_children();
+        .setup(|app| {
+            let handle = app.handle().clone();
+
+            let open_item = MenuItemBuilder::with_id("tray-open", "Abrir").build(app)?;
+            let toggle_item =
+                MenuItemBuilder::with_id("tray-toggle", "Ativar/pausar automação").build(app)?;
+            let run_now_item =
+                MenuItemBuilder::with_id("tray-run-now", "Executar agora").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("tray-quit", "Sair").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&open_item, &toggle_item, &run_now_item, &quit_item])
+                .build()?;
+
+            let mut tray_builder = TrayIconBuilder::with_id("main-tray")
+                .tooltip("Mirella Kommo Sync")
+                .menu(&menu);
+            if let Some(icon) = app.default_window_icon().cloned() {
+                tray_builder = tray_builder.icon(icon);
+            }
+            tray_builder
+                .on_menu_event({
+                    let handle = handle.clone();
+                    move |app, event| match event.id.as_ref() {
+                        "tray-open" => show_main_window(app),
+                        "tray-toggle" => {
+                            update_scheduler(|state| {
+                                if state.enabled {
+                                    state.enabled = false;
+                                    state.paused_reason =
+                                        Some("Pausado manualmente pelo tray.".to_string());
+                                    state.next_run_unix = None;
+                                } else if is_authenticated().is_some() {
+                                    state.enabled = true;
+                                    state.paused_reason = None;
+                                    let interval = clamp_interval(state.interval_minutes);
+                                    state.next_run_unix = Some(now_secs() + interval * 60);
+                                } else {
+                                    state.paused_reason = Some(
+                                        "Abra o app e faça login antes de retomar.".to_string(),
+                                    );
+                                }
+                            });
+                            emit_scheduler_state(&handle);
+                        }
+                        "tray-run-now" => {
+                            if is_authenticated().is_none() {
+                                show_main_window(app);
+                                return;
+                            }
+                            if pipeline_busy_flag().load(Ordering::Acquire) {
+                                return;
+                            }
+                            update_scheduler(|state| {
+                                state.force_trigger = true;
+                                state.paused_reason = None;
+                            });
+                            emit_scheduler_state(&handle);
+                        }
+                        "tray-quit" => quit_application(app),
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event({
+                    move |tray, event| {
+                        if let TrayIconEvent::Click {
+                            button: MouseButton::Left,
+                            button_state: MouseButtonState::Up,
+                            ..
+                        } = event
+                        {
+                            show_main_window(tray.app_handle());
+                        }
+                    }
+                })
+                .build(app)?;
+
+            spawn_scheduler_worker(handle);
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -1044,9 +1588,28 @@ fn main() {
             read_mapping,
             read_review_rows,
             read_apply_results,
+            read_apply_history,
             read_safe_payload_preview,
-            apply_safe_payloads
+            apply_safe_payloads,
+            get_scheduler_state_cmd,
+            set_scheduler_config,
+            scheduler_run_now,
+            quit_app
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                update_scheduler(|state| {
+                    state.shutdown = true;
+                    state.enabled = false;
+                });
+                kill_active_children();
+            }
+        });
+}
+
+#[tauri::command]
+fn quit_app<R: Runtime>(handle: AppHandle<R>) {
+    quit_application(&handle);
 }

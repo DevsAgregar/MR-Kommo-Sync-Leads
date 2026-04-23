@@ -10,14 +10,18 @@ import {
   Clock3,
   Database,
   HelpCircle,
+  History,
   Info,
   LockKeyhole,
   Loader2,
   LogOut,
+  Pause,
+  Play,
   RefreshCw,
   Send,
   Sparkles,
   Terminal,
+  Timer,
   Users,
   XCircle,
   Zap
@@ -74,7 +78,7 @@ type ReviewRow = {
   rule: string;
 };
 
-type Page = "sync" | "review";
+type Page = "sync" | "review" | "history";
 type SyncTask = "clinic" | "operational" | "kommo" | "preview" | "all" | "quick" | "full";
 type StepStatus = "idle" | "running" | "done" | "error";
 type Flow = "sync" | "apply";
@@ -113,6 +117,30 @@ type AuthState = {
   gistConfigured?: boolean;
   gistUrl?: string;
   gistFile?: string | null;
+};
+
+type SchedulerStatus = "idle" | "ok" | "error";
+
+type SchedulerState = {
+  enabled: boolean;
+  intervalMinutes: number;
+  nextRunUnix: number | null;
+  lastRunUnix: number | null;
+  lastStatus: SchedulerStatus;
+  lastError: string | null;
+  running: boolean;
+  pausedReason: string | null;
+};
+
+const DEFAULT_SCHEDULER_STATE: SchedulerState = {
+  enabled: false,
+  intervalMinutes: 60,
+  nextRunUnix: null,
+  lastRunUnix: null,
+  lastStatus: "idle",
+  lastError: null,
+  running: false,
+  pausedReason: null
 };
 
 const LOG_BUFFER_SIZE = 400;
@@ -388,6 +416,44 @@ function useApplyResults() {
   return { data, refresh };
 }
 
+type ApplyHistoryItem = {
+  id: number;
+  leadName: string | null;
+  ok: boolean;
+  error: string | null;
+};
+
+type ApplyHistoryRun = {
+  runId: string;
+  modifiedUnix: number;
+  okCount: number;
+  errCount: number;
+  total: number;
+  items: ApplyHistoryItem[];
+};
+
+function useApplyHistory() {
+  const [runs, setRuns] = useState<ApplyHistoryRun[]>([]);
+  const [loaded, setLoaded] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await call<{ runs: ApplyHistoryRun[] }>("read_apply_history", { limit: 50 });
+      setRuns(result?.runs ?? []);
+    } catch {
+      setRuns([]);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return { runs, loaded, refresh };
+}
+
 function useSafePayloadPreview() {
   const [data, setData] = useState<SafePayloadPreview>({ items: [] });
 
@@ -405,6 +471,90 @@ function useSafePayloadPreview() {
   }, [refresh]);
 
   return { data, refresh };
+}
+
+function useScheduler() {
+  const [state, setState] = useState<SchedulerState>(DEFAULT_SCHEDULER_STATE);
+  const [available, setAvailable] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await call<SchedulerState>("get_scheduler_state_cmd");
+      setState(result);
+      setAvailable(true);
+    } catch {
+      setAvailable(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    let disposed = false;
+    let dispose: (() => void) | null = null;
+    void listen<SchedulerState>("scheduler-state", (event) => {
+      if (disposed) return;
+      setState(event.payload);
+      setAvailable(true);
+    }).then((fn) => {
+      if (disposed) fn();
+      else dispose = fn;
+    });
+    return () => {
+      disposed = true;
+      if (dispose) dispose();
+    };
+  }, []);
+
+  const setConfig = useCallback(async (enabled: boolean, intervalMinutes: number) => {
+    const next = await call<SchedulerState>("set_scheduler_config", {
+      enabled,
+      intervalMinutes
+    });
+    setState(next);
+    return next;
+  }, []);
+
+  const runNow = useCallback(async () => {
+    const next = await call<SchedulerState>("scheduler_run_now");
+    setState(next);
+    return next;
+  }, []);
+
+  return { state, available, refresh, setConfig, runNow };
+}
+
+function formatClock(unixSeconds?: number | null) {
+  if (!unixSeconds) return null;
+  try {
+    return new Date(unixSeconds * 1000).toLocaleTimeString("pt-BR", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  } catch {
+    return null;
+  }
+}
+
+function useCountdown(targetUnix?: number | null) {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    if (!targetUnix) return;
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [targetUnix]);
+  if (!targetUnix) return null;
+  const diff = targetUnix - now;
+  if (diff <= 0) return "em instantes";
+  const minutes = Math.floor(diff / 60);
+  const seconds = diff % 60;
+  if (minutes <= 0) return `em ${seconds}s`;
+  if (minutes < 60) return `em ${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return `em ${hours}h ${remMinutes.toString().padStart(2, "0")}m`;
 }
 
 function useElapsed(startedAt?: number, finishedAt?: number) {
@@ -1096,6 +1246,233 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
   );
 }
 
+function AutomationCard({
+  state,
+  available,
+  desktop,
+  busy,
+  onSetConfig,
+  onRunNow
+}: {
+  state: SchedulerState;
+  available: boolean;
+  desktop: boolean;
+  busy: boolean;
+  onSetConfig: (enabled: boolean, intervalMinutes: number) => Promise<SchedulerState>;
+  onRunNow: () => Promise<SchedulerState>;
+}) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pending, setPending] = useState<"toggle" | "interval" | "now" | null>(null);
+  const countdown = useCountdown(state.enabled && !state.running ? state.nextRunUnix : null);
+  const nextClock = formatClock(state.nextRunUnix);
+  const lastClock = formatClock(state.lastRunUnix);
+
+  const handleToggle = async () => {
+    setActionError(null);
+    setPending("toggle");
+    try {
+      await onSetConfig(!state.enabled, state.intervalMinutes);
+    } catch (error) {
+      setActionError(String(error));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleIntervalChange = async (minutes: number) => {
+    if (minutes === state.intervalMinutes) return;
+    setActionError(null);
+    setPending("interval");
+    try {
+      await onSetConfig(state.enabled, minutes);
+    } catch (error) {
+      setActionError(String(error));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const handleRunNow = async () => {
+    setActionError(null);
+    setPending("now");
+    try {
+      await onRunNow();
+    } catch (error) {
+      setActionError(String(error));
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const disabledAll = !desktop || !available;
+  const statusTone: "ok" | "warn" | "info" | "muted" =
+    state.lastStatus === "ok"
+      ? "ok"
+      : state.lastStatus === "error"
+        ? "warn"
+        : state.enabled
+          ? "info"
+          : "muted";
+
+  return (
+    <Card className="p-4 md:p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="max-w-xl">
+          <Pill tone={statusTone} icon={<Timer className="h-3 w-3" />}>
+            Automação
+          </Pill>
+          <h3 className="mt-2 text-lg font-semibold text-white md:text-xl">
+            Rodar o fluxo completo automaticamente
+          </h3>
+          <p className="mt-1 text-xs leading-5 text-slate-300 md:text-sm">
+            Enquanto o app estiver aberto (ou minimizado na bandeja), ele atualiza os dados e
+            aplica no Kommo no intervalo escolhido. Fechar a janela não sai do app — use{" "}
+            <strong className="text-white">Sair</strong> pelo ícone da bandeja.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-stretch gap-2 lg:items-end">
+          <button
+            type="button"
+            onClick={() => void handleToggle()}
+            disabled={disabledAll || pending !== null}
+            className={cx(
+              "inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+              state.enabled
+                ? "border border-amber-400/40 bg-amber-500/15 text-amber-100 hover:border-amber-400/60 hover:bg-amber-500/20"
+                : "btn-primary"
+            )}
+            aria-busy={pending === "toggle"}
+          >
+            {pending === "toggle" ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : state.enabled ? (
+              <Pause className="h-4 w-4" aria-hidden />
+            ) : (
+              <Play className="h-4 w-4" aria-hidden />
+            )}
+            {state.enabled ? "Pausar automação" : "Ativar automação"}
+          </button>
+          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+            {[30, 60].map((minutes) => {
+              const active = state.intervalMinutes === minutes;
+              return (
+                <button
+                  key={minutes}
+                  type="button"
+                  onClick={() => void handleIntervalChange(minutes)}
+                  disabled={disabledAll || pending !== null}
+                  className={cx(
+                    "inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+                    active
+                      ? "bg-white text-slate-950 shadow"
+                      : "text-slate-300 hover:bg-white/10 hover:text-white"
+                  )}
+                  aria-pressed={active}
+                >
+                  {minutes === 60 ? "1 h" : `${minutes} min`}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRunNow()}
+            disabled={disabledAll || busy || pending !== null}
+            className="btn-ghost inline-flex h-9 items-center justify-center gap-2 rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+            aria-busy={pending === "now"}
+          >
+            {pending === "now" || state.running ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+            )}
+            Executar agora
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+          <p className="text-[11px] font-medium text-slate-400">Situação</p>
+          <p
+            className={cx(
+              "mt-1 text-sm font-semibold",
+              state.running
+                ? "text-cyan-200"
+                : state.enabled
+                  ? "text-emerald-200"
+                  : "text-slate-300"
+            )}
+          >
+            {state.running
+              ? "Executando agora"
+              : state.enabled
+                ? "Ativa"
+                : state.pausedReason
+                  ? "Pausada"
+                  : "Desativada"}
+          </p>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+          <p className="text-[11px] font-medium text-slate-400">Próxima execução</p>
+          <p className="mt-1 text-sm font-semibold text-white">
+            {state.running
+              ? "—"
+              : state.enabled && nextClock
+                ? `${nextClock}${countdown ? ` · ${countdown}` : ""}`
+                : "sem agendamento"}
+          </p>
+        </div>
+        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+          <p className="text-[11px] font-medium text-slate-400">Último ciclo</p>
+          <p
+            className={cx(
+              "mt-1 text-sm font-semibold",
+              state.lastStatus === "ok"
+                ? "text-emerald-200"
+                : state.lastStatus === "error"
+                  ? "text-rose-200"
+                  : "text-slate-300"
+            )}
+          >
+            {state.lastRunUnix
+              ? `${state.lastStatus === "ok" ? "ok" : state.lastStatus === "error" ? "falhou" : "—"} · ${lastClock ?? timeAgo(state.lastRunUnix)}`
+              : "ainda não executada"}
+          </p>
+        </div>
+      </div>
+
+      {state.pausedReason ? (
+        <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="leading-5">Pausada: {state.pausedReason}</span>
+        </div>
+      ) : null}
+
+      {state.lastError && state.lastStatus === "error" ? (
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+          <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="leading-5 break-words">{state.lastError}</span>
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="leading-5 break-words">{actionError}</span>
+        </div>
+      ) : null}
+
+      {!desktop ? (
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+          <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span>A automação só funciona com o app desktop em execução.</span>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
 function SyncPage({
   snapshot,
   desktop,
@@ -1107,6 +1484,10 @@ function SyncPage({
   applyLogs,
   applyResults,
   safePayloadPreview,
+  scheduler,
+  schedulerAvailable,
+  onSchedulerSetConfig,
+  onSchedulerRunNow,
   onQuickUpdate,
   onFullUpdate,
   onApply,
@@ -1123,6 +1504,10 @@ function SyncPage({
   applyLogs: Record<string, LogLine[]>;
   applyResults: ApplyResults;
   safePayloadPreview: SafePayloadPreview;
+  scheduler: SchedulerState;
+  schedulerAvailable: boolean;
+  onSchedulerSetConfig: (enabled: boolean, intervalMinutes: number) => Promise<SchedulerState>;
+  onSchedulerRunNow: () => Promise<SchedulerState>;
   onQuickUpdate: () => void;
   onFullUpdate: () => void;
   onApply: () => void;
@@ -1139,6 +1524,7 @@ function SyncPage({
 
   const quickRunning = command.running && command.task === "quick";
   const fullRunning = command.running && command.task === "full";
+  const pipelineBusy = command.running || applyCommand.running || scheduler.running;
 
   const scrollToApply = () => {
     applyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1152,7 +1538,16 @@ function SyncPage({
         onApply={onApply}
         onDetails={scrollToApply}
         busy={applyCommand.running}
-        disabled={command.running || !desktop}
+        disabled={pipelineBusy || !desktop}
+      />
+
+      <AutomationCard
+        state={scheduler}
+        available={schedulerAvailable}
+        desktop={desktop}
+        busy={command.running || applyCommand.running}
+        onSetConfig={onSchedulerSetConfig}
+        onRunNow={onSchedulerRunNow}
       />
 
       <ActionHero
@@ -1167,12 +1562,12 @@ function SyncPage({
         primaryLabel={quickRunning ? "Atualizando..." : "Atualização rápida"}
         primaryIcon={<Zap className="h-4 w-4" />}
         onPrimary={onQuickUpdate}
-        primaryDisabled={command.running}
+        primaryDisabled={pipelineBusy}
         primaryLoading={quickRunning}
         secondaryLabel={fullRunning ? "Processando tudo..." : "Atualização completa"}
         secondaryIcon={<RefreshCw className="h-3.5 w-3.5" />}
         onSecondary={onFullUpdate}
-        secondaryDisabled={command.running}
+        secondaryDisabled={pipelineBusy}
         secondaryLoading={fullRunning}
         statusMessage={command.message || undefined}
         statusOk={command.ok}
@@ -1300,7 +1695,7 @@ function SyncPage({
             type="button"
             className="btn-apply inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-xs disabled:cursor-not-allowed"
             onClick={onApply}
-            disabled={applyCommand.running || command.running || !desktop || safeRows <= 0}
+            disabled={pipelineBusy || !desktop || safeRows <= 0}
             aria-busy={applyCommand.running}
           >
             {applyCommand.running ? (
@@ -1531,6 +1926,250 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   );
 }
 
+function parseRunId(runId: string): Date | null {
+  const match = runId.match(/^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/);
+  if (!match) return null;
+  const [, y, mo, d, h, mi, s] = match;
+  return new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+}
+
+function formatRunStamp(run: ApplyHistoryRun): string {
+  const parsed = parseRunId(run.runId);
+  const date = parsed ?? (run.modifiedUnix ? new Date(run.modifiedUnix * 1000) : null);
+  if (!date) return run.runId;
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function HistoryRunCard({
+  run,
+  filter,
+  expandedInitially
+}: {
+  run: ApplyHistoryRun;
+  filter: string;
+  expandedInitially: boolean;
+}) {
+  const [expanded, setExpanded] = useState(expandedInitially);
+  const stamp = formatRunStamp(run);
+  const term = filter.trim().toLowerCase();
+  const filteredItems = term
+    ? run.items.filter((item) =>
+        (item.leadName ?? `lead ${item.id}`).toLowerCase().includes(term)
+      )
+    : run.items;
+  if (term && filteredItems.length === 0) return null;
+  const visible = expanded ? filteredItems : filteredItems.slice(0, 8);
+  return (
+    <Card className="p-4 md:p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Pill
+            tone={run.errCount > 0 ? "warn" : "ok"}
+            icon={<Clock3 className="h-3 w-3" />}
+          >
+            {stamp}
+          </Pill>
+          <p className="mt-2 text-sm font-semibold text-white">
+            {number(run.okCount)} cliente{run.okCount === 1 ? "" : "s"} atualizado
+            {run.okCount === 1 ? "" : "s"}
+            {run.errCount > 0 ? ` · ${number(run.errCount)} com erro` : ""}
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate-400">
+            {timeAgo(run.modifiedUnix)} · execução {run.runId}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <>
+              Recolher <ChevronUp className="h-3 w-3" />
+            </>
+          ) : (
+            <>
+              Ver todos ({number(filteredItems.length)}) <ChevronDown className="h-3 w-3" />
+            </>
+          )}
+        </button>
+      </div>
+      <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+        {visible.map((item) => (
+          <li
+            key={`${run.runId}-${item.id}`}
+            className={cx(
+              "flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs",
+              item.ok
+                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
+                : "border-rose-400/40 bg-rose-500/10 text-rose-100"
+            )}
+            title={item.error || undefined}
+          >
+            {item.ok ? (
+              <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            ) : (
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+            )}
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-white">
+                {item.leadName || `Lead ${item.id}`}
+              </p>
+              <p className="truncate text-[10px] text-slate-400">
+                id {item.id}
+                {!item.ok && item.error ? ` · ${item.error}` : ""}
+              </p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function HistoryPage({
+  runs,
+  loaded,
+  onRefresh
+}: {
+  runs: ApplyHistoryRun[];
+  loaded: boolean;
+  onRefresh: () => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const totalLeads = runs.reduce((sum, run) => sum + run.okCount, 0);
+  const totalErrors = runs.reduce((sum, run) => sum + run.errCount, 0);
+  const lastStamp = runs.length ? formatRunStamp(runs[0]) : null;
+
+  return (
+    <div className="space-y-4">
+      <Card className="hero-gradient p-5 md:p-6">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="max-w-2xl">
+            <Pill tone="info" icon={<History className="h-3 w-3" />}>
+              Histórico
+            </Pill>
+            <h2 className="mt-3 text-2xl font-bold tracking-tight text-white md:text-3xl">
+              Clientes enviados ao Kommo
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-300">
+              Cada item mostra quando o envio ocorreu e quais clientes foram atualizados no Kommo.
+              Pesquise por nome para rastrear um paciente específico.
+            </p>
+            {lastStamp ? (
+              <p className="mt-2 text-xs text-slate-400">
+                Último envio: <span className="font-semibold text-white">{lastStamp}</span>
+              </p>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+            <div className="surface-raised rounded-xl border border-emerald-400/30 px-3 py-2 text-center">
+              <p className="text-2xl font-bold text-emerald-200">{number(totalLeads)}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/80">
+                envios ok
+              </p>
+            </div>
+            <div className="surface-raised rounded-xl border border-white/10 px-3 py-2 text-center">
+              <p className="text-2xl font-bold text-white">{number(runs.length)}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+                ciclos
+              </p>
+            </div>
+            <div
+              className={cx(
+                "surface-raised rounded-xl border px-3 py-2 text-center",
+                totalErrors > 0 ? "border-rose-400/40" : "border-white/10"
+              )}
+            >
+              <p
+                className={cx(
+                  "text-2xl font-bold",
+                  totalErrors > 0 ? "text-rose-200" : "text-slate-300"
+                )}
+              >
+                {number(totalErrors)}
+              </p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
+                erros
+              </p>
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4 md:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex-1 sm:max-w-sm">
+            <input
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Pesquisar por nome do cliente..."
+              className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-400/40 focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+              aria-label="Pesquisar histórico"
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            disabled={refreshing}
+            className="btn-ghost inline-flex h-9 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {refreshing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            Atualizar
+          </button>
+        </div>
+      </Card>
+
+      {!loaded ? (
+        <Card className="p-6 text-center text-xs text-slate-400">
+          <Loader2 className="mx-auto h-5 w-5 animate-spin text-slate-500" />
+          <p className="mt-2">Carregando histórico...</p>
+        </Card>
+      ) : runs.length === 0 ? (
+        <Card className="p-6 text-center text-xs text-slate-400">
+          <History className="mx-auto h-7 w-7 text-slate-500" aria-hidden />
+          <p className="mt-2 text-sm font-semibold text-white">Nenhum envio registrado ainda</p>
+          <p className="mt-1">Assim que você aplicar atualizações ao Kommo, elas aparecem aqui.</p>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {runs.map((run, index) => (
+            <HistoryRunCard
+              key={run.runId}
+              run={run}
+              filter={query}
+              expandedInitially={index === 0 && !query}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LoginScreen({
   auth,
   loading,
@@ -1639,7 +2278,7 @@ function LoginScreen({
 function loadInitialPage(): Page {
   try {
     const stored = window.localStorage.getItem(PAGE_STORAGE_KEY);
-    if (stored === "sync" || stored === "review") return stored;
+    if (stored === "sync" || stored === "review" || stored === "history") return stored;
   } catch {
     // ignore
   }
@@ -1651,6 +2290,8 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   const review = useReviewRows();
   const applyResults = useApplyResults();
   const safePayloadPreview = useSafePayloadPreview();
+  const scheduler = useScheduler();
+  const applyHistory = useApplyHistory();
   const [page, setPage] = useState<Page>(loadInitialPage);
   const [command, setCommand] = useState<CommandState>({ running: false, message: "", ok: null });
   const [applyCommand, setApplyCommand] = useState<CommandState>({ running: false, message: "", ok: null });
@@ -1667,6 +2308,19 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
       // ignore
     }
   }, [page]);
+
+  const schedulerRunning = scheduler.state.running;
+  const prevSchedulerRunning = useRef(false);
+  useEffect(() => {
+    if (prevSchedulerRunning.current && !schedulerRunning) {
+      void refresh();
+      void review.refresh();
+      void applyResults.refresh();
+      void safePayloadPreview.refresh();
+      void applyHistory.refresh();
+    }
+    prevSchedulerRunning.current = schedulerRunning;
+  }, [schedulerRunning, refresh, review, applyResults, safePayloadPreview, applyHistory]);
 
   useEffect(() => {
     let disposed = false;
@@ -1811,6 +2465,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
       await review.refresh();
       await applyResults.refresh();
       await safePayloadPreview.refresh();
+      await applyHistory.refresh();
     } catch (error) {
       setApplyCommand({
         running: false,
@@ -1819,12 +2474,13 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
         finishedAt: Date.now()
       });
       void applyResults.refresh();
+      void applyHistory.refresh();
     }
   }
 
   const safeRows = snapshot.previewSummary?.safe_field_row_count ?? snapshot.safeRowsCount ?? 0;
   const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
-  const anyRunning = command.running || applyCommand.running;
+  const anyRunning = command.running || applyCommand.running || scheduler.state.running;
 
   const subtitle = useMemo(() => {
     if (anyRunning) return "Processando em segundo plano...";
@@ -1941,6 +2597,23 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
                   </span>
                 ) : null}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPage("history");
+                  void applyHistory.refresh();
+                }}
+                className={cx(
+                  "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
+                  page === "history"
+                    ? "bg-white text-slate-950 shadow"
+                    : "text-slate-300 hover:bg-white/10 hover:text-white"
+                )}
+                aria-current={page === "history" ? "page" : undefined}
+              >
+                <History className="h-3.5 w-3.5" aria-hidden />
+                Histórico
+              </button>
             </nav>
           </div>
         </header>
@@ -1958,14 +2631,24 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
               applyLogs={applyLogs}
               applyResults={applyResults.data}
               safePayloadPreview={safePayloadPreview.data}
+              scheduler={scheduler.state}
+              schedulerAvailable={scheduler.available}
+              onSchedulerSetConfig={scheduler.setConfig}
+              onSchedulerRunNow={scheduler.runNow}
               onQuickUpdate={() => runSyncTask("quick")}
               onFullUpdate={() => runSyncTask("full")}
               onApply={applySafePayloads}
               onOpenReview={() => setPage("review")}
               applyRef={applyCardRef}
             />
-          ) : (
+          ) : page === "review" ? (
             <ReviewPage snapshot={snapshot} rows={review.rows} />
+          ) : (
+            <HistoryPage
+              runs={applyHistory.runs}
+              loaded={applyHistory.loaded}
+              onRefresh={applyHistory.refresh}
+            />
           )}
         </main>
 
