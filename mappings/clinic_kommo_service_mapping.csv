@@ -1,44 +1,69 @@
 raw_value,mapped_value,confidence,rule,notes
-sense on sculpture,Massagem SOS,high,product_family,Umbrella da linha Sense On Sculpture
-sense on sculpture 10 sessoes,Massagem SOS,high,product_family,Pacote da linha Sense On Sculpture
-retorno botox,Botox,high,return_family,Retorno do procedimento de Botox
-retorno do preenchimento labial,Ácido Hialurônico,high,return_family,Retorno de procedimento com preenchimento
-peeling quimico pos botox,Peeling,high,post_procedure_family,Peeling continua sendo a familia principal
-botox day feminino,Botox,high,product_family,Pacote de Botox
-synergy prime botox rosto completo feminino,Synergy Prime|Botox,high,composite_family,Pacote Synergy Prime com Botox
-synergy prime botox rosto completo masculino,Synergy Prime|Botox,high,composite_family,Pacote Synergy Prime com Botox
-limpeza de pele express,Glowing Complexion Essencial,medium,facial_cleaning_family,Associado a limpeza facial base da linha Glowing
-avaliacao facial,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-avaliacao corporal,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-avaliacao online,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-hialuronidase,Ácido Hialurônico,medium,correction_family,Relacionada a reversao de preenchimento com AH
-bioestimulador hialurox bio,Bioestimulador de Colágeno,high,product_family,Familia de bioestimulador
-preenchimento facial,Ácido Hialurônico,high,treatment_family,Preenchedor de AH
-preenchimento labial,Ácido Hialurônico,high,treatment_family,Preenchedor de AH
-mesotox microtox,Botox,high,treatment_family,Microtox e familia Botox
-co2 full face,CO2 Resurfacing,high,co2_family,Familia CO2
-co2 colo,CO2 Resurfacing,high,co2_family,Familia CO2
-co2 pescoco,CO2 Resurfacing,high,co2_family,Familia CO2
-co2 pescoço,CO2 Resurfacing,high,co2_family,Familia CO2
-glowing complexion,Glowing Complexion Essencial,medium,product_family,Uso generico da familia Glowing
-glowing pearl,Glowing Complexion Essencial,medium,product_family,Protocolo de limpeza/renovacao da linha Glowing
-glowing skinbooster,Skinbooster,high,component_family,Componente principal do protocolo
-lavieen full face,Lavieen,high,product_family,Familia Lavieen
-lavieen 03 regioes,Lavieen,high,product_family,Familia Lavieen
-enzima corporal,Enzimas,high,product_family,Familia de enzimas
-enzimas protocolo venus,Método Vênus|Enzimas,high,composite_family,Protocolo Venus com enzimas
-ultrassom microfocado contorno,Ultrassom Contorno,high,product_family,Familia de contorno
-ultrassom microfocado contorno papada,Ultrassom Contorno|Ultrassom Microfocado Papada,high,composite_family,Protocolo composto
-radiofrequencia corporal,Radiofrequência,high,product_family,Familia de radiofrequencia
-microagulhamento com serum,Microagulhamento,high,product_family,Familia de microagulhamento
-botox platisma,Botox,high,treatment_family,Familia Botox
-manthus,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-exossomos,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-laserterapia,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-gloss labial,Lip Reveal,medium,lip_family,Servico labial mais proximo
-dermo mr protetor solar em bastao,Dermocosméticos,high,product_family,Linha de dermocosmeticos
-furo em orelha,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
-vitamina d 600 000 ui intramuscular,,none,no_equivalent,Sem equivalente claro no enum atual do Kommo
+avaliacao corporal,"Avaliação facial, corporal, online, profissional",high,manual_final,Planilha final ajustada ao enum vivo do Kommo
+avaliacao facial,"Avaliação facial, corporal, online, profissional",high,manual_final,Planilha final ajustada ao enum vivo do Kommo
+avaliacao online,"Avaliação facial, corporal, online, profissional",high,manual_final,Planilha final ajustada ao enum vivo do Kommo
+avaliacao profissional,"Avaliação facial, corporal, online, profissional",high,manual_final,Planilha final ajustada ao enum vivo do Kommo
+bioestimulador evo,Bioestimulador de Colágeno,high,manual_final,Planilha final
+bioestimulador evo diamond victa,Bioestimulador de Colágeno,high,manual_final,Planilha final
+bioestimulador hialurox bio,Bioestimulador de Colágeno,high,manual_final,Planilha final
+botox day feminino,Botox|Synergy Prime,high,manual_final,Planilha final indicou Botox ou Synergy Prime
+botox day masculino,Botox|Synergy Prime,high,manual_final,Planilha final indicou Botox ou Synergy Prime
+botox platisma,Botox|Synergy Prime,high,manual_final,Planilha final indicou Botox ou Synergy Prime
+co2 exossomos,CO2 Resurfacing,high,manual_final,Planilha final
+co2 colo,CO2 Resurfacing,high,manual_final,Planilha final
+co2 full face,CO2 Resurfacing,high,manual_final,Planilha final
+co2 glow up,CO2 Resurfacing,high,manual_final,Planilha final
+co2 pescoco,CO2 Resurfacing,high,manual_final,Planilha final
+co2 regiao unica cicatriz ou estrias,CO2 Resurfacing,high,manual_final,Planilha final
+criofrequencia,Criofrequência,high,manual_final,Planilha final
+criolipolise,Criolipólise,high,manual_final,Planilha final
+dermo mr protetor solar em bastao,Dermocosméticos,high,manual_final,Planilha final
+diamond,Bioestimulador de Colágeno,high,manual_final,Planilha final
+drenagem local,Drenagem Linfática,high,manual_final,Planilha final
+enzima corporal,Enzimas,high,manual_final,Planilha final
+enzimas protocolo venus,Método MR Gordura Localizada,high,manual_final,Planilha final
+exossomos,Bioregeneradores,high,manual_final,Planilha final
+fio filler 10 fios dentro de uma canula,Fios de PDO,high,manual_final,Planilha final
+fios pdo liso,Fios de PDO,high,manual_final,Planilha final
+furo em orelha,,none,no_equivalent,Planilha final marcou N/A
+gloss labial,Dermocosméticos,high,manual_final,Planilha final
+glowing complexion,Glowing Complexion Essencial,high,manual_final,Planilha final
+glowing pearl,Glowing Complexion Plus,high,manual_final,Planilha final
+glowing skinbooster,Glowing Complexion Bioregenere,high,manual_final,Planilha final
+hialuronidase,Hialuronidase,high,manual_final,Planilha final
+laserterapia,Laser terapia,high,manual_final,Planilha final ajustada ao enum vivo do Kommo
+lavieen full face,Lavieen,high,manual_final,Planilha final
+limpeza de pele express,Glowing Complexion Essencial,high,manual_final,Planilha final
+luz pulsada feminina buco,Luz Pulsada,high,manual_final,Planilha final
+luz pulsada feminina virilha simples,Luz Pulsada,high,manual_final,Planilha final
+manthus,Aparelhos manthus / vibrocell,high,manual_final,Planilha final
+massagem facial relaxante,Massagem SOS,high,manual_final,Planilha final
+mesotox microtox,Synergy Prime MX,high,manual_final,Planilha final
+microagulhamento com serum,Microagulhamento,high,manual_final,Planilha final
+ozonioterapia,Ozonioterapia,high,manual_final,Planilha final
+pdrn,Bioregeneradores,high,manual_final,Planilha final
+pdrn topico,Bioregeneradores,high,manual_final,Planilha final
+peeling quimico acido retinoico,Peeling,high,manual_final,Planilha final
+peeling quimico pos botox,Peeling,high,manual_final,Planilha final
+pontilhismo facial somente acido hialuronico minimo 5ml,Pontilhismo Facial AH,high,manual_final,Planilha final
+preenchimento facial,Ácido Hialurônico,high,manual_final,Planilha final
+preenchimento labial,Lip Reveal,high,manual_final,Planilha final
+preenchimento olheira,Ácido Hialurônico,high,manual_final,Planilha final
+radiofrequencia corporal,Radiofrequência,high,manual_final,Planilha final
+retorno botox,Botox,high,manual_final,Planilha final
+retorno do preenchimento labial,Ácido Hialurônico,high,manual_final,Planilha final
+rinomodelacao,Rinomodelação,high,manual_final,Planilha final
+rinotox,Rinomodelação,high,manual_final,Planilha final
+sense on sculpture,Massagem SOS,high,manual_final,Planilha final
+skinbooster face,Skinbooster,high,manual_final,Planilha final
+skinbooster na area dos olhos,Skinbooster,high,manual_final,Planilha final
+synergy prime botox rosto completo feminino,Botox|Synergy Prime,high,manual_final,Planilha final indicou Botox ou Synergy Prime
+synergy prime botox rosto completo masculino,Botox|Synergy Prime,high,manual_final,Planilha final indicou Botox ou Synergy Prime
+ultrassom microfocado contorno papada,Ultrassom Microfocado Papada,high,manual_final,Planilha final
+ultrassom microfocado full face lift face,Ultrassom Microfocado Full Face,high,manual_final,Planilha final
+vibrocell,Aparelhos manthus / vibrocell,high,manual_final,Planilha final
+victa,Bioestimulador de Colágeno,high,manual_final,Planilha final
+vitamina d 600 000 ui intramuscular,Soroterapia,high,manual_final,Planilha final
 botox,Botox,high,substring,Match por substring
 microagulhamento,Microagulhamento,high,substring,Match por substring
 skinbooster,Skinbooster,high,substring,Match por substring
@@ -58,7 +83,6 @@ microfocado abdômen,Ultrassom Microfocado Abdômen,high,substring,Match por sub
 microfocado contorno,Ultrassom Contorno,medium,semantic,Equivalencia semantica
 ultrassom contorno,Ultrassom Contorno,high,substring,Match por substring
 peeling,Peeling,high,substring,Match por substring
-pdrn,PDRN,high,substring,Match por substring
 ozonioterapia,Ozonioterapia,high,substring,Match por substring
 jato de plasma,Jato de Plasma,high,substring,Match por substring
 soroterapia,Soroterapia,high,substring,Match por substring
@@ -68,21 +92,10 @@ fios pdo,Fios de PDO,high,substring,Match por substring
 bioestimulador,Bioestimulador de Colágeno,high,family,Familia de bioestimulador
 acido hialuronico,Ácido Hialurônico,high,substring,Match por substring
 acido hialurônico,Ácido Hialurônico,high,substring,Match por substring
-preenchimento labial,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
-preenchimento facial,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
-preenchimento olheira,Ácido Hialurônico,medium,treatment_family,Derivado de preenchedor
 pontilhismo facial,Pontilhismo Facial AH,high,substring,Match por substring
-rinomodelacao,Rinomodelação,high,substring,Match por substring
-rinomodelação,Rinomodelação,high,substring,Match por substring
-co2 glow up,CO2 Glow-Up,high,substring,Match por substring
-co2 full face,CO2 Resurfacing,medium,co2_family,Familia de CO2
-co2 colo,CO2 Resurfacing,medium,co2_family,Familia de CO2
-co2 pescoco,CO2 Resurfacing,medium,co2_family,Familia de CO2
-co2 pescoço,CO2 Resurfacing,medium,co2_family,Familia de CO2
+co2 resurfacing,CO2 Resurfacing,high,substring,Match por substring
 glowing complexion plus,Glowing Complexion Plus,high,substring,Match por substring
-glowing complexion,Glowing Complexion Bioregenere Plus,medium,family,Familia Glowing
-massagem facial relaxante,Massagem S.O.S Relaxante,medium,family,Familia Massagem SOS
-drenagem local,Drenagem Linfática,medium,family,Familia drenagem
 drenagem linfatica,Drenagem Linfática,high,substring,Match por substring
 drenagem linfática,Drenagem Linfática,high,substring,Match por substring
 tratamento capilar,Protocolo Capilar,high,semantic,Equivalencia semantica
+sense on sculpture,Massagem SOS,high,product_family,Umbrella da linha Sense On Sculpture

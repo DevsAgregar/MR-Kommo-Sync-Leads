@@ -438,13 +438,22 @@ def _build_patient_candidate_values(
     origin_result = map_origin(_normalize_text(patient.get("origem")))
     raw_services = json.loads(patient["servicos_json"]) if patient.get("servicos_json") else []
     service_results = map_service_items(raw_services, enum_maps[1561309])
+    actionable_service_results = [
+        item for item in service_results
+        if item.rule != "no_equivalent"
+    ]
     flattened_services: List[str] = []
-    for item in service_results:
+    for item in actionable_service_results:
         for mapped in item.mapped_values:
             if mapped not in flattened_services:
                 flattened_services.append(mapped)
-    all_services_mapped = bool(raw_services) and all(item.mapped_values for item in service_results)
-    all_services_high = all_services_mapped and all(item.confidence == "high" for item in service_results)
+    all_services_mapped = bool(actionable_service_results) and all(
+        item.mapped_values for item in actionable_service_results
+    )
+    all_services_high = all_services_mapped and all(
+        item.confidence == "high" for item in actionable_service_results
+    )
+    raw_actionable_services = [item.raw_value for item in actionable_service_results]
 
     return {
         0: {
@@ -523,7 +532,7 @@ def _build_patient_candidate_values(
                 "none"
             ),
             "rule": "service_mapping_bundle",
-            "raw_value": raw_services,
+            "raw_value": raw_actionable_services,
             "mapping_items": [item.__dict__ for item in service_results],
         },
     }

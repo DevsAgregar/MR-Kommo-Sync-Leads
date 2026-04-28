@@ -68,9 +68,24 @@ def service_mapping_table() -> List[Tuple[str, str, str, str]]:
         mapped_value = row.get("mapped_value") or None
         confidence = row.get("confidence") or "none"
         rule = row.get("rule") or "table"
-        if raw_value and mapped_value:
+        if raw_value and mapped_value and rule != "manual_final":
             rules.append((raw_value, mapped_value, confidence, rule))
     return rules
+
+
+@lru_cache(maxsize=1)
+def service_manual_exact_mapping_table() -> Dict[str, Tuple[str, str, str]]:
+    table: Dict[str, Tuple[str, str, str]] = {}
+    for row in _load_mapping_rows(SERVICE_MAPPING_CSV):
+        raw_value = normalize_token(row.get("raw_value"))
+        if not raw_value:
+            continue
+        mapped_value = row.get("mapped_value") or ""
+        confidence = row.get("confidence") or "none"
+        rule = row.get("rule") or "table"
+        if rule == "manual_final" or rule == "no_equivalent":
+            table[raw_value] = (mapped_value, confidence, rule)
+    return table
 
 
 def map_origin(raw_value: Optional[str]) -> ScalarMapping:
@@ -118,6 +133,12 @@ def map_service_item(
     normalized = normalize_token(cleaned)
     if not normalized:
         return MultiMappingItem(raw_value=cleaned, mapped_values=(), confidence="none", rule="empty")
+
+    manual = service_manual_exact_mapping_table().get(normalized)
+    if manual is not None:
+        mapped_value, confidence, rule = manual
+        mapped_values = tuple(value.strip() for value in mapped_value.split("|") if value.strip())
+        return MultiMappingItem(raw_value=cleaned, mapped_values=mapped_values, confidence=confidence, rule=rule)
 
     direct = _best_direct_service_match(normalized, enum_by_normalized)
     if direct is not None:
