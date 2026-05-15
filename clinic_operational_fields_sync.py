@@ -504,6 +504,7 @@ class PatientOperationalStore:
                 ultima_visita TEXT,
                 agendamento TEXT,
                 proxima_consulta TEXT,
+                visitas_count INTEGER,
                 servicos_text TEXT,
                 servicos_json TEXT,
                 ultima_visita_agenda_id INTEGER,
@@ -539,6 +540,7 @@ class PatientOperationalStore:
                 ops.ultima_visita,
                 ops.agendamento,
                 ops.proxima_consulta,
+                ops.visitas_count,
                 ops.servicos_text,
                 ops.servicos_json,
                 ops.ultima_visita_agenda_id,
@@ -575,6 +577,7 @@ class PatientOperationalStore:
             "financeiro_pago_linhas": "INTEGER",
             "financeiro_ultimo_pago": "REAL",
             "financeiro_ultimo_pago_data": "TEXT",
+            "visitas_count": "INTEGER",
         }
         for name, sql_type in required.items():
             if name not in existing:
@@ -650,6 +653,7 @@ class PatientOperationalStore:
                     ultima_visita,
                     agendamento,
                     proxima_consulta,
+                    visitas_count,
                     servicos_text,
                     servicos_json,
                     ultima_visita_agenda_id,
@@ -668,7 +672,7 @@ class PatientOperationalStore:
                     financeiro_ultimo_pago_data,
                     imported_at,
                     raw_payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["patient_id"],
@@ -676,6 +680,7 @@ class PatientOperationalStore:
                     payload.get("ultima_visita"),
                     payload.get("agendamento"),
                     payload.get("proxima_consulta"),
+                    payload.get("visitas_count"),
                     payload.get("servicos_text"),
                     payload.get("servicos_json"),
                     payload.get("ultima_visita_agenda_id"),
@@ -721,8 +726,9 @@ def _build_snapshot(
         financial_summary = _empty_patient_financial_summary()
     origem = _extract_origin(edit_html)
     entries = _extract_timeline_entries(agendamentos_html)
+    valid_past_entries = [entry for entry in entries if _is_valid_last_visit(entry, now)]
 
-    last_entry = max((entry for entry in entries if _is_valid_last_visit(entry, now)), key=lambda item: item.when, default=None)
+    last_entry = max(valid_past_entries, key=lambda item: item.when, default=None)
     next_entry = min((entry for entry in entries if _is_valid_next_visit(entry, now)), key=lambda item: item.when, default=None)
 
     services: List[str] = []
@@ -739,6 +745,7 @@ def _build_snapshot(
         "ultima_visita": last_entry.when.strftime("%Y-%m-%d %H:%M:%S") if last_entry else None,
         "agendamento": next_entry.when.strftime("%Y-%m-%d %H:%M:%S") if next_entry else None,
         "proxima_consulta": next_entry.when.strftime("%Y-%m-%d %H:%M:%S") if next_entry else None,
+        "visitas_count": len(valid_past_entries) if valid_past_entries else None,
         "servicos_text": "; ".join(services) if services else None,
         "servicos_json": json.dumps(services, ensure_ascii=False) if services else None,
         "ultima_visita_agenda_id": last_entry.agenda_id if last_entry else None,
@@ -867,18 +874,20 @@ def main() -> None:
                 SUM(CASE WHEN ultima_visita IS NOT NULL AND TRIM(ultima_visita) <> '' THEN 1 ELSE 0 END) AS ultima_visita_count,
                 SUM(CASE WHEN agendamento IS NOT NULL AND TRIM(agendamento) <> '' THEN 1 ELSE 0 END) AS agendamento_count,
                 SUM(CASE WHEN proxima_consulta IS NOT NULL AND TRIM(proxima_consulta) <> '' THEN 1 ELSE 0 END) AS proxima_consulta_count,
+                SUM(CASE WHEN visitas_count IS NOT NULL THEN 1 ELSE 0 END) AS visitas_count_count,
                 SUM(CASE WHEN servicos_text IS NOT NULL AND TRIM(servicos_text) <> '' THEN 1 ELSE 0 END) AS servicos_count,
                 SUM(CASE WHEN financeiro_pago_total IS NOT NULL THEN 1 ELSE 0 END) AS financeiro_count
             FROM patient_operational_fields
             """
         ).fetchone()
         logger.info(
-            "Campos operacionais sincronizados: total=%s | origem=%s | ultima_visita=%s | agendamento=%s | proxima_consulta=%s | servicos=%s | financeiro=%s",
+            "Campos operacionais sincronizados: total=%s | origem=%s | ultima_visita=%s | agendamento=%s | proxima_consulta=%s | visitas=%s | servicos=%s | financeiro=%s",
             summary["total"],
             summary["origem_count"],
             summary["ultima_visita_count"],
             summary["agendamento_count"],
             summary["proxima_consulta_count"],
+            summary["visitas_count_count"],
             summary["servicos_count"],
             summary["financeiro_count"],
         )

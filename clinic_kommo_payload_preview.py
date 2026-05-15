@@ -332,6 +332,7 @@ def _load_patients(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
             ops.ultima_visita,
             ops.agendamento,
             ops.proxima_consulta,
+            ops.visitas_count,
             ops.servicos_json,
             sales.last_sale_competencia,
             sales.last_sale_value
@@ -451,7 +452,7 @@ def _build_patient_candidate_values(
     raw_actionable_services = [item.raw_value for item in actionable_service_results]
     latest_paid_value = patient.get("financeiro_ultimo_pago")
     paid_total = patient.get("financeiro_pago_total")
-    paid_rows = patient.get("financeiro_pago_linhas")
+    visit_count = patient.get("visitas_count")
 
     return {
         0: {
@@ -492,9 +493,9 @@ def _build_patient_candidate_values(
         },
         1559587: {
             "kind": "integer",
-            "candidate_value": paid_rows if paid_rows is not None else patient.get("total_vendas_linhas"),
+            "candidate_value": visit_count,
             "confidence": "high",
-            "rule": "patient_financial_paid_rows" if paid_rows is not None else "financial_summary_total_vendas_linhas",
+            "rule": "operational_visit_count",
         },
         1561317: {
             "kind": "date",
@@ -610,14 +611,15 @@ def _write_markdown(
             "- `fill_empty`: Kommo value is empty and clinic value is available.",
             "- `update_if_greater`: clinic numeric value is greater than Kommo.",
             "- `update_if_newer`: clinic date/datetime is newer or the next appointment changed.",
-            "- `sync_authoritative`: clinic paid-financial value differs from Kommo and should replace it.",
+            "- `sync_authoritative`: clinic authoritative value differs from Kommo and should replace it.",
             "- `merge`: multiselect receives mapped values without removing existing values.",
             "- `skip`: no safe change is needed.",
             "",
             "## Notes",
             "",
-            "- Safe payloads include fill, greater/newer updates, paid-financial syncs, and multiselect merges according to field policy.",
+            "- Safe payloads include fill, greater/newer updates, authoritative syncs, and multiselect merges according to field policy.",
             "- `Venda` is previewed through the lead root field `price`, using the latest paid patient-financial value.",
+            "- `Visitas` is previewed from valid past appointments in Clínica Ágil, not from financial rows.",
             "- `Origem` and `Serviço` use mapping rules and can fall into review when confidence is not high.",
             "- `Serviço` preview may include one or more enum values because the Kommo field is multiselect.",
         ]

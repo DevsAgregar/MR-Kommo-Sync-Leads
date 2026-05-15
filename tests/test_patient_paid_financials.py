@@ -1,10 +1,11 @@
 import unittest
 import logging
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from clinic_kommo_payload_preview import FIELD_SPECS, _build_patient_candidate_values, _decide_direct_action
-from clinic_operational_fields_sync import _extract_patient_financial_summary
+from clinic_operational_fields_sync import _build_snapshot, _extract_patient_financial_summary
 from env_config import load_env_file
 from login import SQLitePatientStore, _normalizar_documento_generico, _normalizar_nome_busca
 
@@ -42,6 +43,29 @@ PATIENT_FINANCIAL_HTML = """
 """
 
 
+class _FakeOperationalLogger:
+    def warning(self, *_args, **_kwargs) -> None:
+        pass
+
+
+class _FakeOperationalExtractor:
+    def __init__(self, agendamentos_html: str) -> None:
+        self.agendamentos_html = agendamentos_html
+        self.logger = _FakeOperationalLogger()
+
+    def get_patient_edit_html(self, _patient_id: int) -> str:
+        return "<html></html>"
+
+    def get_patient_agendamentos_html(self, _patient_id: int) -> str:
+        return self.agendamentos_html
+
+    def get_patient_financial_html(self, _patient_id: int) -> str:
+        return PATIENT_FINANCIAL_HTML
+
+    def get_agenda_event(self, _agenda_id: int) -> dict:
+        return {}
+
+
 class PatientPaidFinancialsTest(unittest.TestCase):
     def test_extract_patient_financial_summary_tracks_paid_not_overdue(self) -> None:
         summary = _extract_patient_financial_summary(PATIENT_FINANCIAL_HTML)
@@ -75,8 +99,62 @@ class PatientPaidFinancialsTest(unittest.TestCase):
         self.assertEqual(candidates[0]["rule"], "patient_financial_latest_paid_value")
         self.assertEqual(candidates[1561947]["candidate_value"], 180.0)
         self.assertEqual(candidates[1561947]["rule"], "patient_financial_paid_total")
-        self.assertEqual(candidates[1559587]["candidate_value"], 1)
-        self.assertEqual(candidates[1559587]["rule"], "patient_financial_paid_rows")
+        self.assertIsNone(candidates[1559587]["candidate_value"])
+        self.assertEqual(candidates[1559587]["rule"], "operational_visit_count")
+
+    def test_kommo_payload_uses_operational_visit_count(self) -> None:
+        patient = {
+            "patient_id": 764,
+            "nome": "Allan Carlos Guimaraes",
+            "data_nascimento": "1994-01-17",
+            "status": "Ativo",
+            "total_vendido_liquido": 756.0,
+            "total_vendas_linhas": 4,
+            "last_sale_value": 198.0,
+            "financeiro_pago_total": 180.0,
+            "financeiro_pago_linhas": 1,
+            "financeiro_ultimo_pago": 180.0,
+            "financeiro_ultimo_pago_data": "2026-04-30",
+            "visitas_count": 7,
+            "servicos_json": "[]",
+        }
+
+        candidates = _build_patient_candidate_values(patient, {1561319: {}, 1561309: {}})
+
+        self.assertEqual(candidates[1559587]["candidate_value"], 7)
+        self.assertEqual(candidates[1559587]["rule"], "operational_visit_count")
+
+    def test_operational_snapshot_counts_valid_past_visits(self) -> None:
+        extractor = _FakeOperationalExtractor(
+            agendamentos_html="""
+            <div class="linha_agendamentos_paciente">
+              <div class="time-text"><span>01/05/2026</span><span>10:00</span></div>
+              <a href="/agenda/index/101"></a>
+              <div class="agendamentos-col-sta">Status Finalizado</div>
+            </div>
+            <div class="linha_agendamentos_paciente">
+              <div class="time-text"><span>10/05/2026</span><span>11:00</span></div>
+              <a href="/agenda/index/102"></a>
+              <div class="agendamentos-col-sta">Status Não compareceu</div>
+            </div>
+            <div class="linha_agendamentos_paciente">
+              <div class="time-text"><span>12/05/2026</span><span>09:30</span></div>
+              <a href="/agenda/index/103"></a>
+              <div class="agendamentos-col-sta">Status Atendido</div>
+            </div>
+            <div class="linha_agendamentos_paciente">
+              <div class="time-text"><span>16/05/2026</span><span>09:00</span></div>
+              <a href="/agenda/index/104"></a>
+              <div class="agendamentos-col-sta">Status Agendado</div>
+            </div>
+            """
+        )
+
+        snapshot = _build_snapshot(extractor, patient_id=764, now=datetime(2026, 5, 15, 12, 0))
+
+        self.assertEqual(snapshot["visitas_count"], 2)
+        self.assertEqual(snapshot["ultima_visita"], "2026-05-12 09:30:00")
+        self.assertEqual(snapshot["agendamento"], "2026-05-16 09:00:00")
 
     def test_paid_financial_values_are_authoritative_even_when_lower(self) -> None:
         sale_spec = next(spec for spec in FIELD_SPECS if spec.slug == "sale_value")
