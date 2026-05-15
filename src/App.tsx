@@ -1463,6 +1463,7 @@ function SyncPage({
   safePayloadPreview,
   scheduler,
   schedulerAvailable,
+  reviewRowsCount,
   onSchedulerSetConfig,
   onSchedulerRunNow,
   onQuickUpdate,
@@ -1483,6 +1484,7 @@ function SyncPage({
   safePayloadPreview: SafePayloadPreview;
   scheduler: SchedulerState;
   schedulerAvailable: boolean;
+  reviewRowsCount: number;
   onSchedulerSetConfig: (enabled: boolean, intervalMinutes: number) => Promise<SchedulerState>;
   onSchedulerRunNow: () => Promise<SchedulerState>;
   onQuickUpdate: () => void;
@@ -1495,7 +1497,7 @@ function SyncPage({
   const actions = summary?.action_counts ?? {};
   const safeLeads = summary?.safe_lead_count ?? snapshot.safePayloadCount ?? 0;
   const safeRows = summary?.safe_field_row_count ?? snapshot.safeRowsCount ?? 0;
-  const reviewRows = summary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
+  const reviewRows = reviewRowsCount;
   const patientCount = summary?.match_summary?.patient_count ?? 0;
   const leadCount = summary?.match_summary?.lead_count ?? 0;
 
@@ -1712,7 +1714,7 @@ function SyncPage({
 function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] }) {
   const stats = snapshot.previewSummary?.field_stats ?? {};
   const service = stats.service;
-  const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
+  const reviewRows = rows.length;
   const [query, setQuery] = useState("");
   // Em listas grandes, filtrar a cada tecla trava a UI em maquinas fracas.
   // useDeferredValue adia o filtro para uma atualizacao de baixa prioridade,
@@ -2367,6 +2369,12 @@ function AuthenticatedApp({
     }
   }, [page]);
 
+  useEffect(() => {
+    if (page !== "review") return;
+    void refresh();
+    void review.refresh();
+  }, [page, refresh, review.refresh]);
+
   const schedulerRunning = scheduler.state.running;
   const prevSchedulerRunning = useRef(false);
   useEffect(() => {
@@ -2580,7 +2588,7 @@ function AuthenticatedApp({
   }
 
   const safeRows = snapshot.previewSummary?.safe_field_row_count ?? snapshot.safeRowsCount ?? 0;
-  const reviewRows = snapshot.previewSummary?.review_field_row_count ?? snapshot.reviewRowsCount ?? 0;
+  const reviewRows = review.rows.length;
   const anyRunning = command.running || applyCommand.running || scheduler.state.running;
 
   const subtitle = useMemo(() => {
@@ -2737,6 +2745,7 @@ function AuthenticatedApp({
                 safePayloadPreview={safePayloadPreview.data}
                 scheduler={scheduler.state}
                 schedulerAvailable={scheduler.available}
+                reviewRowsCount={reviewRows}
                 onSchedulerSetConfig={scheduler.setConfig}
                 onSchedulerRunNow={scheduler.runNow}
                 onQuickUpdate={() => runSyncTask("quick")}
