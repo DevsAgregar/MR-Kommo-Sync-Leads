@@ -29,7 +29,7 @@ class FieldSpec:
 
 FIELD_SPECS: Sequence[FieldSpec] = (
     FieldSpec(1561315, "birthday", "Data de aniversário", "date"),
-    FieldSpec(1561939, "age_bucket", "Faixa Etária", "text"),
+    FieldSpec(1561939, "age", "Idade", "integer"),
     FieldSpec(1559591, "status", "Status do Cliente", "text"),
     FieldSpec(1561947, "billed_total", "Faturado", "numeric"),
     FieldSpec(1559587, "visits", "Visitas", "integer"),
@@ -117,24 +117,6 @@ def _calculate_age(birth_iso: Optional[str]) -> Optional[int]:
     return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
 
 
-def _age_bucket(age: Optional[int]) -> Optional[str]:
-    if age is None:
-        return None
-    if age < 18:
-        return "Menor de 18"
-    if age <= 24:
-        return "18-24"
-    if age <= 34:
-        return "25-34"
-    if age <= 44:
-        return "35-44"
-    if age <= 54:
-        return "45-54"
-    if age <= 64:
-        return "55-64"
-    return "65+"
-
-
 def _load_patients(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
     rows = conn.execute(
         """
@@ -174,7 +156,7 @@ def _build_patient_candidate_values(patient: Dict[str, Any]) -> Dict[int, Option
     age = _calculate_age(patient.get("data_nascimento"))
     return {
         1561315: _normalize_date(patient.get("data_nascimento")),
-        1561939: _age_bucket(age),
+        1561939: _normalize_integer(age),
         1559591: _normalize_text(patient.get("status")),
         1561947: _normalize_numeric(patient.get("total_vendido_liquido")),
         1559587: _normalize_integer(patient.get("total_vendas_linhas")),
@@ -352,7 +334,7 @@ def _write_markdown(
             "",
             "## Recommended App Rollout",
             "",
-            "1. v1: update only empty fields `Data de aniversário`, `Faixa Etária`, `Status do Cliente`, `Faturado`, `Visitas` on exact unique matches.",
+            "1. v1: update only empty fields `Data de aniversário`, `Idade`, `Status do Cliente`, `Faturado`, `Visitas` on exact unique matches.",
             "2. v2: fetch Kommo contacts and add CPF/phone/email matching to expand match coverage safely.",
             "3. v3: only after audit approval, consider overwriting non-empty Kommo values when clinic data is fresher.",
             "",

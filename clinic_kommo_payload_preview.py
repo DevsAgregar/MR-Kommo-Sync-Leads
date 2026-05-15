@@ -41,7 +41,7 @@ FIELD_SPECS: Sequence[FieldSpec] = (
     FieldSpec(None, "sale_value", "Venda", "numeric", "lead_price"),
     FieldSpec(1561315, "birthday", "Data de aniversário", "date"),
     FieldSpec(1559593, "birthday_month", "Aniversariantes do Mês", "text"),
-    FieldSpec(1561939, "age_bucket", "Faixa Etária", "text"),
+    FieldSpec(1561939, "age", "Idade", "integer"),
     FieldSpec(1559591, "status", "Status do Cliente", "text"),
     FieldSpec(1561947, "billed_total", "Faturado", "numeric"),
     FieldSpec(1559587, "visits", "Visitas", "integer"),
@@ -248,6 +248,15 @@ def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any)
             return "sync_authoritative", current, candidate
         return "skip", current, candidate
 
+    if spec.slug == "age":
+        current_number = _integer_value(current_raw)
+        candidate_number = _integer_value(candidate_raw)
+        if candidate_number is None:
+            return "skip", current, candidate
+        if current_number != candidate_number:
+            return "sync_authoritative", current, candidate
+        return "skip", current, candidate
+
     if spec.slug in {"last_visit", "appointment", "next_consultation"}:
         current_date = _datetime_sort_value(spec.value_kind, current_raw)
         candidate_date = _datetime_sort_value(spec.value_kind, candidate_raw)
@@ -267,24 +276,6 @@ def _calculate_age(birth_iso: Optional[str]) -> Optional[int]:
     birth = datetime.strptime(normalized, "%Y-%m-%d").date()
     today = date.today()
     return today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-
-
-def _age_bucket(age: Optional[int]) -> Optional[str]:
-    if age is None:
-        return None
-    if age < 18:
-        return "Menor de 18"
-    if age <= 24:
-        return "18-24"
-    if age <= 34:
-        return "25-34"
-    if age <= 44:
-        return "35-44"
-    if age <= 54:
-        return "45-54"
-    if age <= 64:
-        return "55-64"
-    return "65+"
 
 
 def _birthday_month_name(birth_iso: Optional[str]) -> Optional[str]:
@@ -482,10 +473,10 @@ def _build_patient_candidate_values(
             "rule": "derived_birthday_month_name",
         },
         1561939: {
-            "kind": "text",
-            "candidate_value": _age_bucket(age),
+            "kind": "integer",
+            "candidate_value": age,
             "confidence": "high",
-            "rule": "derived_age_bucket",
+            "rule": "derived_exact_age",
         },
         1559591: {
             "kind": "text",
