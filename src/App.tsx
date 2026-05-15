@@ -36,6 +36,7 @@ type FieldStat = {
   fill_empty?: number;
   update_if_greater?: number;
   update_if_newer?: number;
+  sync_authoritative?: number;
   merge?: number;
   skip?: number;
 };
@@ -1657,11 +1658,12 @@ function SyncPage({
             description="Resumo do que está preparado para aplicar no Kommo."
             icon={<ClipboardList className="h-3.5 w-3.5" />}
           />
-          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
             {[
               ["Preencher vazios", "fill_empty"],
               ["Aumentar valores", "update_if_greater"],
               ["Datas mais novas", "update_if_newer"],
+              ["Sincronizar financeiro", "sync_authoritative"],
               ["Somar serviços", "merge"]
             ].map(([label, key]) => (
               <div

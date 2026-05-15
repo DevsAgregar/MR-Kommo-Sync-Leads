@@ -1122,9 +1122,9 @@ class SQLitePatientStore:
         cursor.execute(
             """
             DELETE FROM patient_financial_sales
-            WHERE source_period_start = ? AND source_period_end = ?
+            WHERE source_period_start = ?
             """,
-            (source_period_start_iso, source_period_end_iso),
+            (source_period_start_iso,),
         )
 
         resumo = {"total": 0, "matched": 0, "unmatched": 0}
@@ -1227,9 +1227,9 @@ class SQLitePatientStore:
         cursor.execute(
             """
             DELETE FROM patient_financial_receipts
-            WHERE source_period_start = ? AND source_period_end = ?
+            WHERE source_period_start = ?
             """,
-            (source_period_start_iso, source_period_end_iso),
+            (source_period_start_iso,),
         )
 
         resumo = {"total": 0, "matched": 0, "unmatched": 0}

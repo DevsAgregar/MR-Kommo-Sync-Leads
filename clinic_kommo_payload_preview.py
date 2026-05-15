@@ -25,7 +25,7 @@ from clinic_kommo_field_mappings import (
 DEFAULT_PATIENT_DB = Path("mirella_pacientes.sqlite3")
 DEFAULT_KOMMO_DB = Path("mirella_kommo_leads.sqlite3")
 DEFAULT_OUTPUT_DIR = Path("exports") / "sync_preview"
-SAFE_ACTIONS = {"fill_empty", "update_if_greater", "update_if_newer", "merge"}
+SAFE_ACTIONS = {"fill_empty", "update_if_greater", "update_if_newer", "sync_authoritative", "merge"}
 
 
 @dataclass(frozen=True)
@@ -227,8 +227,8 @@ def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any)
             return "skip", current, None
         if current_number is None:
             return "fill_empty", current, f"{candidate_number:.2f}"
-        if candidate_number > current_number:
-            return "update_if_greater", current, f"{candidate_number:.2f}"
+        if candidate_number != current_number:
+            return "sync_authoritative", current, f"{candidate_number:.2f}"
         return "skip", current, f"{candidate_number:.2f}"
 
     if _is_empty_value(current_raw):
@@ -237,15 +237,15 @@ def _decide_direct_action(spec: FieldSpec, current_raw: Any, candidate_raw: Any)
     if spec.slug == "billed_total":
         current_number = _numeric_float(current_raw)
         candidate_number = _numeric_float(candidate_raw)
-        if current_number is not None and candidate_number is not None and candidate_number > current_number:
-            return "update_if_greater", current, candidate
+        if current_number is not None and candidate_number is not None and candidate_number != current_number:
+            return "sync_authoritative", current, candidate
         return "skip", current, candidate
 
     if spec.slug == "visits":
         current_number = _integer_value(current_raw)
         candidate_number = _integer_value(candidate_raw)
-        if current_number is not None and candidate_number is not None and candidate_number > current_number:
-            return "update_if_greater", current, candidate
+        if current_number is not None and candidate_number is not None and candidate_number != current_number:
+            return "sync_authoritative", current, candidate
         return "skip", current, candidate
 
     if spec.slug in {"last_visit", "appointment", "next_consultation"}:
@@ -333,6 +333,10 @@ def _load_patients(conn: sqlite3.Connection) -> List[Dict[str, Any]]:
             ops.status,
             ops.total_vendido_liquido,
             ops.total_vendas_linhas,
+            ops.financeiro_pago_total,
+            ops.financeiro_pago_linhas,
+            ops.financeiro_ultimo_pago,
+            ops.financeiro_ultimo_pago_data,
             ops.origem,
             ops.ultima_visita,
             ops.agendamento,
@@ -454,13 +458,16 @@ def _build_patient_candidate_values(
         item.confidence == "high" for item in actionable_service_results
     )
     raw_actionable_services = [item.raw_value for item in actionable_service_results]
+    latest_paid_value = patient.get("financeiro_ultimo_pago")
+    paid_total = patient.get("financeiro_pago_total")
+    paid_rows = patient.get("financeiro_pago_linhas")
 
     return {
         0: {
             "kind": "numeric",
-            "candidate_value": patient.get("last_sale_value"),
+            "candidate_value": latest_paid_value if latest_paid_value is not None else patient.get("last_sale_value"),
             "confidence": "high",
-            "rule": "financial_latest_sale_value",
+            "rule": "patient_financial_latest_paid_value" if latest_paid_value is not None else "financial_latest_sale_value",
         },
         1561315: {
             "kind": "date",
@@ -488,15 +495,15 @@ def _build_patient_candidate_values(
         },
         1561947: {
             "kind": "numeric",
-            "candidate_value": patient.get("total_vendido_liquido"),
+            "candidate_value": paid_total if paid_total is not None else patient.get("total_vendido_liquido"),
             "confidence": "high",
-            "rule": "financial_summary_total_vendido_liquido",
+            "rule": "patient_financial_paid_total" if paid_total is not None else "financial_summary_total_vendido_liquido",
         },
         1559587: {
             "kind": "integer",
-            "candidate_value": patient.get("total_vendas_linhas"),
+            "candidate_value": paid_rows if paid_rows is not None else patient.get("total_vendas_linhas"),
             "confidence": "high",
-            "rule": "financial_summary_total_vendas_linhas",
+            "rule": "patient_financial_paid_rows" if paid_rows is not None else "financial_summary_total_vendas_linhas",
         },
         1561317: {
             "kind": "date",
@@ -612,13 +619,14 @@ def _write_markdown(
             "- `fill_empty`: Kommo value is empty and clinic value is available.",
             "- `update_if_greater`: clinic numeric value is greater than Kommo.",
             "- `update_if_newer`: clinic date/datetime is newer or the next appointment changed.",
+            "- `sync_authoritative`: clinic paid-financial value differs from Kommo and should replace it.",
             "- `merge`: multiselect receives mapped values without removing existing values.",
             "- `skip`: no safe change is needed.",
             "",
             "## Notes",
             "",
-            "- Safe payloads include fill, greater/newer updates, and multiselect merges according to field policy.",
-            "- `Venda` is previewed through the lead root field `price`, using the latest clinic sale value.",
+            "- Safe payloads include fill, greater/newer updates, paid-financial syncs, and multiselect merges according to field policy.",
+            "- `Venda` is previewed through the lead root field `price`, using the latest paid patient-financial value.",
             "- `Origem` and `Serviço` use mapping rules and can fall into review when confidence is not high.",
             "- `Serviço` preview may include one or more enum values because the Kommo field is multiselect.",
         ]
@@ -648,6 +656,7 @@ def run(patient_db: Path, kommo_db: Path, output_dir: Path) -> Dict[str, Any]:
                 "fill_empty": 0,
                 "update_if_greater": 0,
                 "update_if_newer": 0,
+                "sync_authoritative": 0,
                 "merge": 0,
                 "skip": 0,
             }

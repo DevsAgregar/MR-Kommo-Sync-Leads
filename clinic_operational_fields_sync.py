@@ -180,6 +180,92 @@ def _normalize_name(value: Any) -> Optional[str]:
     return text or None
 
 
+def _money_to_float(value: Any) -> Optional[float]:
+    text = _normalize_space(value)
+    if not text:
+        return None
+    text = text.replace("R$", "").strip()
+    text = re.sub(r"[^\d,.-]+", "", text)
+    if not text:
+        return None
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _safe_iso_date(value: Optional[str]) -> Optional[str]:
+    try:
+        return _to_iso_date(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _empty_patient_financial_summary() -> Dict[str, Any]:
+    return {
+        "financeiro_aberto_total": None,
+        "financeiro_atraso_total": None,
+        "financeiro_pago_total": None,
+        "financeiro_pago_linhas": None,
+        "financeiro_ultimo_pago": None,
+        "financeiro_ultimo_pago_data": None,
+    }
+
+
+def _extract_card_money(soup: BeautifulSoup, element_id: str) -> Optional[float]:
+    element = soup.select_one(f"#{element_id} .span-dinheiro")
+    if element is None:
+        return None
+    return _money_to_float(element.get_text(" ", strip=True))
+
+
+def _extract_patient_financial_summary(financial_html: str) -> Dict[str, Any]:
+    soup = BeautifulSoup(financial_html, "html.parser")
+    summary = _empty_patient_financial_summary()
+    summary["financeiro_aberto_total"] = _extract_card_money(soup, "href-aberto")
+    summary["financeiro_atraso_total"] = _extract_card_money(soup, "href-atrasado")
+    summary["financeiro_pago_total"] = _extract_card_money(soup, "href-pago")
+
+    paid_rows: List[Dict[str, Any]] = []
+    for index, row in enumerate(soup.select("tr.pago")):
+        cells = [cell.get_text(" ", strip=True) for cell in row.select("td")]
+        if len(cells) < 7:
+            continue
+        paid_value = _money_to_float(cells[6])
+        if paid_value is None:
+            paid_value = _money_to_float(cells[5])
+        if paid_value is None:
+            continue
+
+        paid_rows.append(
+            {
+                "index": index,
+                "vencimento": _safe_iso_date(cells[3]),
+                "pagamento": _safe_iso_date(cells[4]),
+                "valor_pago": paid_value,
+            }
+        )
+
+    summary["financeiro_pago_linhas"] = len(paid_rows)
+    if summary["financeiro_pago_total"] is None and paid_rows:
+        summary["financeiro_pago_total"] = sum(float(row["valor_pago"]) for row in paid_rows)
+
+    if paid_rows:
+        latest_paid = max(
+            paid_rows,
+            key=lambda item: (
+                item.get("pagamento") or item.get("vencimento") or "",
+                int(item["index"]),
+            ),
+        )
+        summary["financeiro_ultimo_pago"] = latest_paid["valor_pago"]
+        summary["financeiro_ultimo_pago_data"] = latest_paid.get("pagamento") or latest_paid.get("vencimento")
+
+    return summary
+
+
 class ClinicaAgilOperationalExtractor:
     def __init__(self, email: str, senha: str, timeout: int, logger: logging.Logger) -> None:
         self.email = email
@@ -252,6 +338,17 @@ class ClinicaAgilOperationalExtractor:
             return response.text
 
         return _request_with_retry(self.logger, f"agendamentos/{patient_id}", _do)
+
+    def get_patient_financial_html(self, patient_id: int) -> str:
+        def _do() -> str:
+            response = self.session.get(
+                f"{BASE_URL}/pacientes/visualizar/{patient_id}/financeiro",
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+            return response.text
+
+        return _request_with_retry(self.logger, f"financeiro/{patient_id}", _do)
 
     def get_agenda_event(self, agenda_id: int) -> Dict[str, Any]:
         def _do() -> Dict[str, Any]:
@@ -417,10 +514,21 @@ class PatientOperationalStore:
                 proximo_agendamento_profissional TEXT,
                 ultima_visita_especialidade TEXT,
                 proximo_agendamento_especialidade TEXT,
+                financeiro_aberto_total REAL,
+                financeiro_atraso_total REAL,
+                financeiro_pago_total REAL,
+                financeiro_pago_linhas INTEGER,
+                financeiro_ultimo_pago REAL,
+                financeiro_ultimo_pago_data TEXT,
                 imported_at TEXT NOT NULL,
                 raw_payload_json TEXT NOT NULL,
                 FOREIGN KEY(patient_id) REFERENCES patients(patient_id) ON DELETE CASCADE
             );
+            """
+        )
+        self._ensure_schema_columns()
+        self.conn.executescript(
+            """
 
             DROP VIEW IF EXISTS vw_patients_complete_operational;
 
@@ -441,6 +549,12 @@ class PatientOperationalStore:
                 ops.proximo_agendamento_profissional,
                 ops.ultima_visita_especialidade,
                 ops.proximo_agendamento_especialidade,
+                ops.financeiro_aberto_total,
+                ops.financeiro_atraso_total,
+                ops.financeiro_pago_total,
+                ops.financeiro_pago_linhas,
+                ops.financeiro_ultimo_pago,
+                ops.financeiro_ultimo_pago_data,
                 ops.imported_at AS operational_imported_at
             FROM vw_patients_complete_financial base
             LEFT JOIN patient_operational_fields ops
@@ -448,6 +562,25 @@ class PatientOperationalStore:
             """
         )
         self.conn.commit()
+
+    def _ensure_schema_columns(self) -> None:
+        existing = {
+            str(row["name"])
+            for row in self.conn.execute("PRAGMA table_info(patient_operational_fields)")
+        }
+        required = {
+            "financeiro_aberto_total": "REAL",
+            "financeiro_atraso_total": "REAL",
+            "financeiro_pago_total": "REAL",
+            "financeiro_pago_linhas": "INTEGER",
+            "financeiro_ultimo_pago": "REAL",
+            "financeiro_ultimo_pago_data": "TEXT",
+        }
+        for name, sql_type in required.items():
+            if name not in existing:
+                self.conn.execute(
+                    f"ALTER TABLE patient_operational_fields ADD COLUMN {name} {sql_type}"
+                )
 
     def patient_ids(self, limit: Optional[int] = None) -> List[int]:
         sql = "SELECT patient_id FROM patients ORDER BY patient_id"
@@ -527,9 +660,15 @@ class PatientOperationalStore:
                     proximo_agendamento_profissional,
                     ultima_visita_especialidade,
                     proximo_agendamento_especialidade,
+                    financeiro_aberto_total,
+                    financeiro_atraso_total,
+                    financeiro_pago_total,
+                    financeiro_pago_linhas,
+                    financeiro_ultimo_pago,
+                    financeiro_ultimo_pago_data,
                     imported_at,
                     raw_payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     payload["patient_id"],
@@ -547,6 +686,12 @@ class PatientOperationalStore:
                     payload.get("proximo_agendamento_profissional"),
                     payload.get("ultima_visita_especialidade"),
                     payload.get("proximo_agendamento_especialidade"),
+                    payload.get("financeiro_aberto_total"),
+                    payload.get("financeiro_atraso_total"),
+                    payload.get("financeiro_pago_total"),
+                    payload.get("financeiro_pago_linhas"),
+                    payload.get("financeiro_ultimo_pago"),
+                    payload.get("financeiro_ultimo_pago_data"),
                     imported_at,
                     payload_json,
                 ),
@@ -567,6 +712,13 @@ def _build_snapshot(
 ) -> Dict[str, Any]:
     edit_html = extractor.get_patient_edit_html(patient_id)
     agendamentos_html = extractor.get_patient_agendamentos_html(patient_id)
+    try:
+        financial_summary = _extract_patient_financial_summary(
+            extractor.get_patient_financial_html(patient_id)
+        )
+    except Exception as exc:
+        extractor.logger.warning("Falha ao extrair financeiro do paciente %s: %s", patient_id, exc)
+        financial_summary = _empty_patient_financial_summary()
     origem = _extract_origin(edit_html)
     entries = _extract_timeline_entries(agendamentos_html)
 
@@ -597,6 +749,7 @@ def _build_snapshot(
         "proximo_agendamento_profissional": next_entry.professional if next_entry else None,
         "ultima_visita_especialidade": last_entry.specialty if last_entry else None,
         "proximo_agendamento_especialidade": next_entry.specialty if next_entry else None,
+        **financial_summary,
     }
 
 
@@ -714,18 +867,20 @@ def main() -> None:
                 SUM(CASE WHEN ultima_visita IS NOT NULL AND TRIM(ultima_visita) <> '' THEN 1 ELSE 0 END) AS ultima_visita_count,
                 SUM(CASE WHEN agendamento IS NOT NULL AND TRIM(agendamento) <> '' THEN 1 ELSE 0 END) AS agendamento_count,
                 SUM(CASE WHEN proxima_consulta IS NOT NULL AND TRIM(proxima_consulta) <> '' THEN 1 ELSE 0 END) AS proxima_consulta_count,
-                SUM(CASE WHEN servicos_text IS NOT NULL AND TRIM(servicos_text) <> '' THEN 1 ELSE 0 END) AS servicos_count
+                SUM(CASE WHEN servicos_text IS NOT NULL AND TRIM(servicos_text) <> '' THEN 1 ELSE 0 END) AS servicos_count,
+                SUM(CASE WHEN financeiro_pago_total IS NOT NULL THEN 1 ELSE 0 END) AS financeiro_count
             FROM patient_operational_fields
             """
         ).fetchone()
         logger.info(
-            "Campos operacionais sincronizados: total=%s | origem=%s | ultima_visita=%s | agendamento=%s | proxima_consulta=%s | servicos=%s",
+            "Campos operacionais sincronizados: total=%s | origem=%s | ultima_visita=%s | agendamento=%s | proxima_consulta=%s | servicos=%s | financeiro=%s",
             summary["total"],
             summary["origem_count"],
             summary["ultima_visita_count"],
             summary["agendamento_count"],
             summary["proxima_consulta_count"],
             summary["servicos_count"],
+            summary["financeiro_count"],
         )
     finally:
         store.close()
