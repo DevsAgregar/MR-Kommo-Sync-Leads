@@ -2,14 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
   ClipboardList,
   Clock3,
   Database,
-  HelpCircle,
   History,
   Info,
   LockKeyhole,
@@ -19,12 +17,10 @@ import {
   Play,
   RefreshCw,
   Send,
-  Sparkles,
   Terminal,
   Timer,
   Users,
-  XCircle,
-  Zap
+  XCircle
 } from "lucide-react";
 import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 
@@ -604,7 +600,7 @@ const Card = React.forwardRef<HTMLElement, { children: React.ReactNode; classNam
       <section
         ref={ref}
         className={cx(
-          "surface rounded-2xl border border-white/10 shadow-lg shadow-black/30",
+          "surface rounded-lg border border-slate-200 shadow-sm shadow-slate-200/40",
           className
         )}
       >
@@ -624,15 +620,15 @@ function Pill({
   icon?: React.ReactNode;
 }) {
   const styles = {
-    ok: "border-emerald-400/40 bg-emerald-400/10 text-emerald-200",
-    warn: "border-amber-400/40 bg-amber-400/10 text-amber-100",
-    info: "border-cyan-400/40 bg-cyan-400/10 text-cyan-100",
-    muted: "border-white/10 bg-white/5 text-slate-300"
+    ok: "border-emerald-200 bg-emerald-50 text-emerald-700",
+    warn: "border-amber-200 bg-amber-50 text-amber-700",
+    info: "border-blue-200 bg-blue-50 text-blue-700",
+    muted: "border-slate-200 bg-slate-50 text-slate-600"
   }[tone];
   return (
     <span
       className={cx(
-        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+        "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-medium",
         styles
       )}
     >
@@ -700,42 +696,6 @@ export default function App() {
   }
 
   return <AuthenticatedApp auth={auth} onLogout={handleLogout} />;
-}
-
-function StatTile({
-  label,
-  value,
-  help,
-  tone,
-  icon
-}: {
-  label: string;
-  value: number;
-  help: string;
-  tone: "ok" | "warn" | "info";
-  icon: React.ReactNode;
-}) {
-  const toneStyles = {
-    ok: { accent: "text-emerald-300", chip: "bg-emerald-400/15 text-emerald-200 border-emerald-400/30", glow: "from-emerald-400/10 to-transparent" },
-    info: { accent: "text-cyan-300", chip: "bg-cyan-400/15 text-cyan-200 border-cyan-400/30", glow: "from-cyan-400/10 to-transparent" },
-    warn: { accent: "text-amber-300", chip: "bg-amber-400/15 text-amber-100 border-amber-400/30", glow: "from-amber-400/10 to-transparent" }
-  }[tone];
-
-  return (
-    <Card className="relative overflow-hidden p-4">
-      <div className={cx("absolute inset-0 bg-gradient-to-br", toneStyles.glow)} aria-hidden />
-      <div className="relative">
-        <div className="flex items-start justify-between gap-2">
-          <p className="text-xs font-medium text-slate-400">{label}</p>
-          <div className={cx("rounded-lg border p-1.5", toneStyles.chip)}>{icon}</div>
-        </div>
-        <p className={cx("mt-1.5 text-3xl font-bold tracking-tight", toneStyles.accent)}>
-          {number(value)}
-        </p>
-        <p className="mt-1 text-xs leading-4 text-slate-400">{help}</p>
-      </div>
-    </Card>
-  );
 }
 
 function LogTerminal({
@@ -1049,174 +1009,6 @@ function SectionTitle({
   );
 }
 
-function ActionHero({
-  title,
-  summary,
-  bullets,
-  primaryLabel,
-  primaryIcon,
-  onPrimary,
-  primaryDisabled,
-  primaryLoading,
-  secondaryLabel,
-  secondaryIcon,
-  onSecondary,
-  secondaryDisabled,
-  secondaryLoading,
-  statusMessage,
-  statusOk
-}: {
-  title: string;
-  summary: string;
-  bullets: string[];
-  primaryLabel: string;
-  primaryIcon: React.ReactNode;
-  onPrimary: () => void;
-  primaryDisabled: boolean;
-  primaryLoading: boolean;
-  secondaryLabel?: string;
-  secondaryIcon?: React.ReactNode;
-  onSecondary?: () => void;
-  secondaryDisabled?: boolean;
-  secondaryLoading?: boolean;
-  statusMessage?: string;
-  statusOk?: boolean | null;
-}) {
-  return (
-    <Card className="hero-gradient shimmer-border p-5 md:p-6">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        <div className="max-w-2xl">
-          <Pill tone="ok" icon={<Sparkles className="h-3 w-3" />}>Principal</Pill>
-          <h2 className="mt-3 text-2xl font-bold leading-tight tracking-tight text-white md:text-3xl">
-            {title}
-          </h2>
-          <p className="mt-2 text-sm leading-6 text-slate-300">{summary}</p>
-          <ul className="mt-3 grid gap-1.5 sm:grid-cols-2" aria-label="O que a atualização faz">
-            {bullets.map((bullet) => (
-              <li key={bullet} className="flex items-start gap-1.5 text-xs text-slate-300">
-                <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-300" aria-hidden />
-                <span>{bullet}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="flex w-full shrink-0 flex-col gap-2 lg:w-auto">
-          <button
-            type="button"
-            className="btn-primary inline-flex h-12 items-center justify-center gap-2 rounded-xl px-6 text-sm disabled:cursor-not-allowed"
-            onClick={onPrimary}
-            disabled={primaryDisabled}
-            aria-busy={primaryLoading}
-          >
-            {primaryLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : (
-              <span aria-hidden>{primaryIcon}</span>
-            )}
-            <span>{primaryLabel}</span>
-            {!primaryLoading ? <ArrowRight className="h-4 w-4" aria-hidden /> : null}
-          </button>
-          {secondaryLabel && onSecondary ? (
-            <button
-              type="button"
-              className="btn-ghost inline-flex h-10 items-center justify-center gap-2 rounded-xl px-4 text-xs font-semibold disabled:cursor-not-allowed"
-              onClick={onSecondary}
-              disabled={secondaryDisabled}
-              aria-busy={secondaryLoading}
-            >
-              {secondaryLoading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              ) : (
-                <span aria-hidden>{secondaryIcon}</span>
-              )}
-              <span>{secondaryLabel}</span>
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {statusMessage ? (
-        <div
-          role="status"
-          aria-live="polite"
-          className={cx(
-            "fade-in mt-4 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
-            statusOk === false
-              ? "border-rose-400/40 bg-rose-500/10 text-rose-100"
-              : statusOk === true
-                ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
-                : "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
-          )}
-        >
-          {statusOk === false ? (
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          ) : statusOk === true ? (
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          ) : (
-            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-          )}
-          <span className="leading-5">{statusMessage}</span>
-        </div>
-      ) : null}
-    </Card>
-  );
-}
-
-function ApplyRibbon({
-  safeLeads,
-  safeRows,
-  onApply,
-  onDetails,
-  busy,
-  disabled
-}: {
-  safeLeads: number;
-  safeRows: number;
-  onApply: () => void;
-  onDetails: () => void;
-  busy: boolean;
-  disabled: boolean;
-}) {
-  if (safeRows <= 0) return null;
-  return (
-    <div className="fade-in sticky top-2 z-20 flex flex-col items-start gap-3 rounded-2xl border border-emerald-400/30 bg-gradient-to-r from-emerald-500/15 via-cyan-500/10 to-emerald-500/5 p-3 shadow-lg shadow-emerald-900/20 backdrop-blur sm:flex-row sm:items-center sm:justify-between sm:p-4">
-      <div className="flex items-center gap-3">
-        <div className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-400/20 text-emerald-200">
-          <Send className="h-4 w-4" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-white">
-            {number(safeRows)} atualizações prontas para enviar ao Kommo
-          </p>
-          <p className="text-xs text-slate-300">
-            {number(safeLeads)} clientes afetados · nada com pendência será enviado
-          </p>
-        </div>
-      </div>
-      <div className="flex shrink-0 gap-2">
-        <button
-          type="button"
-          onClick={onDetails}
-          className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-xl px-3 text-xs font-semibold"
-        >
-          <Info className="h-3.5 w-3.5" />
-          Detalhes
-        </button>
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={busy || disabled}
-          className="btn-apply inline-flex h-9 items-center gap-2 rounded-xl px-4 text-xs disabled:cursor-not-allowed"
-          aria-busy={busy}
-        >
-          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-          {busy ? "Enviando..." : "Aplicar no Kommo"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function AppliedPanel({ data }: { data: ApplyResults }) {
   const [expanded, setExpanded] = useState(false);
   const items = data.items ?? [];
@@ -1348,28 +1140,46 @@ const AutomationCard = React.memo(function AutomationCard({
           : "muted";
 
   return (
-    <Card className="p-4 md:p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="max-w-xl">
-          <Pill tone={statusTone} icon={<Timer className="h-3 w-3" />}>
-            Automação
-          </Pill>
-          <h3 className="mt-2 text-lg font-semibold text-white md:text-xl">
-            Rodar o fluxo completo automaticamente
-          </h3>
-          <p className="mt-1 text-xs leading-5 text-slate-300 md:text-sm">
-            Enquanto o app estiver aberto (ou minimizado na bandeja), ele atualiza os dados e
-            aplica no Kommo no intervalo escolhido. Fechar a janela não sai do app — use{" "}
-            <strong className="text-white">Sair</strong> pelo ícone da bandeja.
+    <Card className="p-3 md:p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-slate-950">Automação</h3>
+            <Pill tone={statusTone} icon={<Timer className="h-3 w-3" />}>
+              {state.running
+                ? "executando"
+                : state.enabled
+                  ? "ativa"
+                  : state.pausedReason
+                    ? "pausada"
+                    : "desativada"}
+            </Pill>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            {state.enabled ? (
+              <>
+                Próxima execução:{" "}
+                <NextRunLabel
+                  running={state.running}
+                  enabled={state.enabled}
+                  nextClock={nextClock}
+                  targetUnix={state.nextRunUnix}
+                />
+              </>
+            ) : state.lastRunUnix ? (
+              <>Último ciclo: {state.lastStatus === "ok" ? "ok" : state.lastStatus === "error" ? "falhou" : "—"} · {lastClock ?? timeAgo(state.lastRunUnix)}</>
+            ) : (
+              "Configure apenas se quiser rodar sem acionar manualmente."
+            )}
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-stretch gap-2 lg:items-end">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <button
             type="button"
             onClick={() => void handleToggle()}
             disabled={disabledAll || pending !== null}
             className={cx(
-              "inline-flex h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+              "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
               state.enabled
                 ? "border border-amber-400/40 bg-amber-500/15 text-amber-100 hover:border-amber-400/60 hover:bg-amber-500/20"
                 : "btn-primary"
@@ -1385,7 +1195,7 @@ const AutomationCard = React.memo(function AutomationCard({
             )}
             {state.enabled ? "Pausar automação" : "Ativar automação"}
           </button>
-          <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1">
+          <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
             {[30, 60].map((minutes) => {
               const active = state.intervalMinutes === minutes;
               return (
@@ -1395,7 +1205,7 @@ const AutomationCard = React.memo(function AutomationCard({
                   onClick={() => void handleIntervalChange(minutes)}
                   disabled={disabledAll || pending !== null}
                   className={cx(
-                    "inline-flex h-8 flex-1 items-center justify-center gap-1 rounded-lg px-3 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60",
+                    "inline-flex h-7 flex-1 items-center justify-center gap-1 rounded px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                     active
                       ? "bg-white text-slate-950 shadow"
                       : "text-slate-300 hover:bg-white/10 hover:text-white"
@@ -1411,7 +1221,7 @@ const AutomationCard = React.memo(function AutomationCard({
             type="button"
             onClick={() => void handleRunNow()}
             disabled={disabledAll || busy || pending !== null}
-            className="btn-ghost inline-flex h-9 items-center justify-center gap-2 rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-ghost inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
             aria-busy={pending === "now"}
           >
             {pending === "now" || state.running ? (
@@ -1424,81 +1234,29 @@ const AutomationCard = React.memo(function AutomationCard({
         </div>
       </div>
 
-      <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-3">
-        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-          <p className="text-[11px] font-medium text-slate-400">Situação</p>
-          <p
-            className={cx(
-              "mt-1 text-sm font-semibold",
-              state.running
-                ? "text-cyan-200"
-                : state.enabled
-                  ? "text-emerald-200"
-                  : "text-slate-300"
-            )}
-          >
-            {state.running
-              ? "Executando agora"
-              : state.enabled
-                ? "Ativa"
-                : state.pausedReason
-                  ? "Pausada"
-                  : "Desativada"}
-          </p>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-          <p className="text-[11px] font-medium text-slate-400">Próxima execução</p>
-          <p className="mt-1 text-sm font-semibold text-white">
-            <NextRunLabel
-              running={state.running}
-              enabled={state.enabled}
-              nextClock={nextClock}
-              targetUnix={state.nextRunUnix}
-            />
-          </p>
-        </div>
-        <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
-          <p className="text-[11px] font-medium text-slate-400">Último ciclo</p>
-          <p
-            className={cx(
-              "mt-1 text-sm font-semibold",
-              state.lastStatus === "ok"
-                ? "text-emerald-200"
-                : state.lastStatus === "error"
-                  ? "text-rose-200"
-                  : "text-slate-300"
-            )}
-          >
-            {state.lastRunUnix
-              ? `${state.lastStatus === "ok" ? "ok" : state.lastStatus === "error" ? "falhou" : "—"} · ${lastClock ?? timeAgo(state.lastRunUnix)}`
-              : "ainda não executada"}
-          </p>
-        </div>
-      </div>
-
       {state.pausedReason ? (
-        <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5">Pausada: {state.pausedReason}</span>
         </div>
       ) : null}
 
       {state.lastError && state.lastStatus === "error" ? (
-        <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
           <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5 break-words">{state.lastError}</span>
         </div>
       ) : null}
 
       {actionError ? (
-        <div className="mt-2 flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5 break-words">{actionError}</span>
         </div>
       ) : null}
 
       {!desktop ? (
-        <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>A automação só funciona com o app desktop em execução.</span>
         </div>
@@ -1560,20 +1318,132 @@ function SyncPage({
   const fullRunning = command.running && command.task === "full";
   const pipelineBusy = command.running || applyCommand.running || scheduler.running;
 
-  const scrollToApply = () => {
-    applyRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-
   return (
-    <div className="space-y-4">
-      <ApplyRibbon
-        safeLeads={safeLeads}
-        safeRows={safeRows}
-        onApply={onApply}
-        onDetails={scrollToApply}
-        busy={applyCommand.running}
-        disabled={pipelineBusy || !desktop}
-      />
+    <div className="space-y-3">
+      <Card className="p-4 md:p-5" ref={applyRef as unknown as React.RefObject<HTMLElement>}>
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <Pill tone={desktop ? "ok" : "warn"} icon={desktop ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}>
+                {desktop ? "conectado" : "modo prévia"}
+              </Pill>
+              {pipelineBusy ? (
+                <Pill tone="info" icon={<Loader2 className="h-3 w-3 animate-spin" />}>processando</Pill>
+              ) : null}
+            </div>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight text-slate-950">
+              Sincronização
+            </h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+              Atualize a base, revise pendências e envie ao Kommo somente o que já foi validado.
+            </p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3 xl:w-[520px]">
+            <button
+              type="button"
+              className="btn-primary inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm disabled:cursor-not-allowed"
+              onClick={onQuickUpdate}
+              disabled={pipelineBusy}
+              aria-busy={quickRunning}
+            >
+              {quickRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
+              Atualizar
+            </button>
+            <button
+              type="button"
+              className="btn-ghost inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium disabled:cursor-not-allowed"
+              onClick={onFullUpdate}
+              disabled={pipelineBusy}
+              aria-busy={fullRunning}
+            >
+              {fullRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Database className="h-4 w-4" aria-hidden />}
+              Completa
+            </button>
+            <button
+              type="button"
+              className="btn-apply inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm disabled:cursor-not-allowed"
+              onClick={onApply}
+              disabled={pipelineBusy || !desktop || safeRows <= 0}
+              aria-busy={applyCommand.running}
+            >
+              {applyCommand.running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+              Enviar
+            </button>
+          </div>
+        </div>
+
+        <dl className="mt-5 grid divide-y divide-slate-200 border-y border-slate-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div className="py-3 sm:pr-4">
+            <dt className="text-xs font-medium text-slate-500">Clientes prontos</dt>
+            <dd className="mt-1 text-2xl font-semibold text-emerald-700">{number(safeLeads)}</dd>
+          </div>
+          <div className="py-3 sm:px-4">
+            <dt className="text-xs font-medium text-slate-500">Campos para enviar</dt>
+            <dd className="mt-1 text-2xl font-semibold text-blue-700">{number(safeRows)}</dd>
+          </div>
+          <div className="py-3 sm:pl-4">
+            <dt className="text-xs font-medium text-slate-500">Pendências</dt>
+            <dd className="mt-1 flex items-baseline gap-2">
+              <span className="text-2xl font-semibold text-amber-700">{number(reviewRows)}</span>
+              {reviewRows > 0 ? (
+                <button
+                  type="button"
+                  onClick={onOpenReview}
+                  className="text-xs font-medium text-blue-700 underline-offset-4 hover:underline"
+                >
+                  revisar
+                </button>
+              ) : null}
+            </dd>
+          </div>
+        </dl>
+
+        {command.message || applyCommand.message || !desktop ? (
+          <div className="mt-4 space-y-2">
+            {!desktop ? (
+              <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                <span>Envio desabilitado fora do app desktop conectado.</span>
+              </div>
+            ) : null}
+            {command.message ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className={cx(
+                  "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+                  command.ok === false
+                    ? "border-rose-200 bg-rose-50 text-rose-800"
+                    : command.ok === true
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-blue-200 bg-blue-50 text-blue-800"
+                )}
+              >
+                {command.ok === false ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : command.ok === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />}
+                <span className="leading-5">{command.message}</span>
+              </div>
+            ) : null}
+            {applyCommand.message ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className={cx(
+                  "flex items-start gap-2 rounded-md border px-3 py-2 text-xs",
+                  applyCommand.ok === false
+                    ? "border-rose-200 bg-rose-50 text-rose-800"
+                    : applyCommand.ok === true
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                      : "border-blue-200 bg-blue-50 text-blue-800"
+                )}
+              >
+                {applyCommand.ok === false ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : applyCommand.ok === true ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden /> : <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />}
+                <span className="leading-5">{applyCommand.message}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </Card>
 
       <AutomationCard
         state={scheduler}
@@ -1584,206 +1454,69 @@ function SyncPage({
         onRunNow={onSchedulerRunNow}
       />
 
-      <ActionHero
-        title="Atualizar os dados do Kommo"
-        summary="Atualização rápida é ideal para o dia a dia (poucos minutos). A completa reprocessa tudo desde o início."
-        bullets={[
-          "Busca os atendimentos recentes da clínica",
-          "Cruza pacientes com leads do Kommo",
-          "Calcula o que pode ir com segurança",
-          "Gera prévia para você conferir"
-        ]}
-        primaryLabel={quickRunning ? "Atualizando..." : "Atualização rápida"}
-        primaryIcon={<Zap className="h-4 w-4" />}
-        onPrimary={onQuickUpdate}
-        primaryDisabled={pipelineBusy}
-        primaryLoading={quickRunning}
-        secondaryLabel={fullRunning ? "Processando tudo..." : "Atualização completa"}
-        secondaryIcon={<RefreshCw className="h-3.5 w-3.5" />}
-        onSecondary={onFullUpdate}
-        secondaryDisabled={pipelineBusy}
-        secondaryLoading={fullRunning}
-        statusMessage={command.message || undefined}
-        statusOk={command.ok}
-      />
-
-      {syncSteps.length ? (
+      {(syncSteps.length && (command.running || command.ok === false)) ? (
         <ProcessTracker
-          title="Andamento da atualização"
-          subtitle={
-            command.running
-              ? "Aguarde — o app mostra o que cada etapa está fazendo em tempo real."
-              : command.ok === true
-                ? "Atualização finalizada com sucesso."
-                : command.ok === false
-                  ? "Houve um problema. Expanda a etapa com erro para ver o log."
-                  : "Últimas etapas executadas."
-          }
+          title="Andamento"
+          subtitle={command.running ? "Processando agora." : "Falhou. Abra a etapa com erro para ver o log."}
           steps={syncSteps}
           running={command.running}
           logs={syncLogs}
         />
       ) : null}
 
-      <section aria-label="Resumo da última atualização" className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <StatTile
-          label="Clientes prontos"
-          value={safeLeads}
-          help="receberão atualização com segurança"
-          tone="ok"
-          icon={<Users className="h-3.5 w-3.5" />}
+      {(applySteps.length && (applyCommand.running || applyCommand.ok === false)) ? (
+        <ProcessTracker
+          title="Envio ao Kommo"
+          steps={applySteps}
+          running={applyCommand.running}
+          logs={applyLogs}
         />
-        <StatTile
-          label="Campos a enviar"
-          value={safeRows}
-          help="atualizações preparadas para o Kommo"
-          tone="info"
-          icon={<Database className="h-3.5 w-3.5" />}
-        />
-        <StatTile
-          label="Para revisar"
-          value={reviewRows}
-          help="precisam da sua decisão"
-          tone="warn"
-          icon={<AlertTriangle className="h-3.5 w-3.5" />}
-        />
-      </section>
+      ) : null}
 
-      <SafePreviewPanel data={safePayloadPreview} />
-
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.35fr_1fr]">
-        <Card className="p-4 md:p-5">
-          <SectionTitle
-            title="O que será enviado"
-            description="Resumo do que está preparado para aplicar no Kommo."
-            icon={<ClipboardList className="h-3.5 w-3.5" />}
-          />
-          <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
-            {[
-              ["Preencher vazios", "fill_empty"],
-              ["Aumentar valores", "update_if_greater"],
-              ["Datas mais novas", "update_if_newer"],
-              ["Sincronizar financeiro", "sync_authoritative"],
-              ["Somar serviços", "merge"]
-            ].map(([label, key]) => (
-              <div
-                key={label}
-                className="rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-white/20 hover:bg-white/[0.06]"
-              >
-                <p className="text-[11px] font-medium text-slate-400">{label}</p>
-                <p className="mt-1 text-2xl font-bold text-white">
-                  {number(actions[key as keyof typeof actions])}
-                </p>
+      <details className="minimal-details">
+        <summary>Prévia, bases e último envio</summary>
+        <div className="mt-3 space-y-3">
+          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_420px]">
+            <section className="rounded-lg border border-slate-200 bg-white p-4">
+              <SectionTitle
+                title="O que será enviado"
+                description="Contagem por tipo de atualização preparada."
+                icon={<ClipboardList className="h-3.5 w-3.5" />}
+              />
+              <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-5">
+                {[
+                  ["Vazios", "fill_empty"],
+                  ["Valores", "update_if_greater"],
+                  ["Datas", "update_if_newer"],
+                  ["Financeiro", "sync_authoritative"],
+                  ["Serviços", "merge"]
+                ].map(([label, key]) => (
+                  <div key={label} className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-[11px] font-medium text-slate-500">{label}</p>
+                    <p className="mt-1 text-xl font-semibold text-slate-950">
+                      {number(actions[key as keyof typeof actions])}
+                    </p>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </Card>
+            </section>
 
-        <Card className="p-4 md:p-5">
-          <SectionTitle
-            title="Estado dos dados"
-            description="Confira se as bases estão recentes."
-            icon={<Database className="h-3.5 w-3.5" />}
-          />
-          <div className="mt-4">
-            <DataFreshness snapshot={snapshot} />
-          </div>
-
-          <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3 text-xs text-slate-300">
-            <div className="flex items-start gap-2">
-              <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-              <div>
-                <p className="font-semibold text-white">
-                  {number(patientCount)} pacientes · {number(leadCount)} leads
-                </p>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-400">
-                  Dados da última prévia. Rode uma atualização para trazer novidades.
-                </p>
+            <section className="rounded-lg border border-slate-200 bg-white p-4">
+              <SectionTitle
+                title="Bases"
+                description={`${number(patientCount)} pacientes · ${number(leadCount)} leads`}
+                icon={<Database className="h-3.5 w-3.5" />}
+              />
+              <div className="mt-4">
+                <DataFreshness snapshot={snapshot} />
               </div>
-            </div>
+            </section>
           </div>
-        </Card>
-      </div>
 
-      <Card className="p-4 md:p-5" ref={applyRef as unknown as React.RefObject<HTMLElement>}>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-2xl">
-            <Pill tone="warn" icon={<Send className="h-3 w-3" />}>Envio ao Kommo</Pill>
-            <h3 className="mt-2 text-xl font-semibold text-white">Aplicar atualizações seguras</h3>
-            <p className="mt-1 text-xs leading-5 text-slate-300 md:text-sm">
-              Envia ao Kommo apenas o que foi validado como seguro pela prévia. Itens em
-              <strong className="mx-1 font-semibold text-amber-200">Pendências</strong>
-              nunca são enviados.
-            </p>
-            {reviewRows > 0 ? (
-              <button
-                type="button"
-                onClick={onOpenReview}
-                className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-cyan-300 underline-offset-4 hover:underline"
-              >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                Ver {number(reviewRows)} pendências antes de aplicar
-              </button>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            className="btn-apply inline-flex h-11 shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-xs disabled:cursor-not-allowed"
-            onClick={onApply}
-            disabled={pipelineBusy || !desktop || safeRows <= 0}
-            aria-busy={applyCommand.running}
-          >
-            {applyCommand.running ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <Send className="h-3.5 w-3.5" aria-hidden />
-            )}
-            {applyCommand.running ? "Enviando..." : "Aplicar no Kommo"}
-          </button>
+          <SafePreviewPanel data={safePayloadPreview} />
+          <AppliedPanel data={applyResults} />
         </div>
-        {!desktop ? (
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-amber-400/40 bg-amber-500/10 p-2.5 text-xs text-amber-100">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            <span>O envio só é habilitado quando o app está conectado ao ambiente local.</span>
-          </div>
-        ) : null}
-        {applyCommand.message ? (
-          <div
-            role="status"
-            aria-live="polite"
-            className={cx(
-              "fade-in mt-3 flex items-start gap-2 rounded-xl border px-3 py-2 text-xs",
-              applyCommand.ok === false
-                ? "border-rose-400/40 bg-rose-500/10 text-rose-100"
-                : applyCommand.ok === true
-                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-100"
-                  : "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
-            )}
-          >
-            {applyCommand.ok === false ? (
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            ) : applyCommand.ok === true ? (
-              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            ) : (
-              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" aria-hidden />
-            )}
-            <span className="leading-5">{applyCommand.message}</span>
-          </div>
-        ) : null}
-
-        {applySteps.length ? (
-          <div className="mt-4">
-            <ProcessTracker
-              title="Andamento da aplicação"
-              steps={applySteps}
-              running={applyCommand.running}
-              logs={applyLogs}
-            />
-          </div>
-        ) : null}
-      </Card>
-
-      <AppliedPanel data={applyResults} />
+      </details>
     </div>
   );
 }
@@ -1811,24 +1544,23 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
   const visibleRows = useMemo(() => filtered.slice(0, 120), [filtered]);
 
   return (
-    <div className="space-y-4">
-      <Card className="hero-gradient p-5 md:p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-2xl">
-            <Pill tone="warn" icon={<AlertTriangle className="h-3 w-3" />}>Revisão humana</Pill>
-            <h2 className="mt-3 text-2xl font-bold tracking-tight text-white md:text-3xl">Pendências</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              Estes itens <strong className="text-white">não vão ao Kommo automaticamente</strong>. Confira cada sugestão e decida se ajusta o mapeamento ou deixa o item fora.
+    <div className="space-y-3">
+      <Card className="p-4 md:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Pendências</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
+              Estes itens ficam fora do envio automático até você ajustar o mapeamento.
             </p>
           </div>
-          <div className="surface-raised rounded-2xl border border-amber-400/30 px-5 py-3 text-center">
-            <p className="text-3xl font-bold text-amber-100 md:text-4xl">{number(reviewRows)}</p>
-            <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-200">aguardando revisão</p>
-          </div>
+          <dl className="rounded-md border border-amber-200 bg-amber-50 px-4 py-2">
+            <dt className="text-xs font-medium text-amber-700">Aguardando revisão</dt>
+            <dd className="text-2xl font-semibold text-amber-800">{number(reviewRows)}</dd>
+          </dl>
         </div>
       </Card>
 
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_300px]">
+      <section className="space-y-3">
         <Card className="p-4 md:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <SectionTitle
@@ -1913,56 +1645,45 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
             Mostrando {Math.min(filtered.length, 120)} de {rows.length} itens.
           </p>
 
-          <div className="mt-3 flex items-start gap-2 rounded-xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-            <p className="leading-5">
-              Para resolver uma pendência, ajuste o mapeamento nas planilhas da pasta
-              <code className="mx-1 rounded bg-black/40 px-1.5 py-0.5 font-mono text-[10px]">mappings/</code>
-              ou deixe o item fora da automação.
-            </p>
+          <p className="mt-3 text-[11px] leading-5 text-slate-500">
+            Ajuste o mapeamento em <code className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px]">mappings/</code> ou mantenha o item fora da automação.
+          </p>
+        </Card>
+
+        <details className="minimal-details">
+          <summary>Resumo e campos manuais</summary>
+          <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+            <dl className="grid grid-cols-3 gap-2 lg:grid-cols-1">
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                <dt className="text-xs font-medium text-emerald-700">Seguros</dt>
+                <dd className="mt-1 text-xl font-semibold text-emerald-800">{number(service?.safe_fill)}</dd>
+              </div>
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                <dt className="text-xs font-medium text-amber-700">Revisão</dt>
+                <dd className="mt-1 text-xl font-semibold text-amber-800">{number(service?.review_fill)}</dd>
+              </div>
+              <div className="rounded-md border border-rose-200 bg-rose-50 p-3">
+                <dt className="text-xs font-medium text-rose-700">Sem regra</dt>
+                <dd className="mt-1 text-xl font-semibold text-rose-800">{number(service?.unmapped)}</dd>
+              </div>
+            </dl>
+
+            <div>
+              <p className="text-xs font-medium text-slate-500">Campos tratados manualmente no Kommo</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {["Retorno", "Consultor", "Atendido por", "Pagamento", "Forma de resgate"].map((item) => (
+                  <span
+                    key={item}
+                    className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600"
+                  >
+                    {item}
+                  </span>
+                ))}
+              </div>
+            </div>
           </div>
-        </Card>
-
-        <Card className="p-4 md:p-5">
-          <SectionTitle
-            title="Resumo de serviços"
-            description="Números que compõem as pendências."
-            icon={<Info className="h-3.5 w-3.5" />}
-          />
-          <dl className="mt-4 space-y-2.5">
-            <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3">
-              <dt className="text-xs font-medium text-emerald-200">Serviços seguros</dt>
-              <dd className="mt-0.5 text-2xl font-bold text-white">{number(service?.safe_fill)}</dd>
-            </div>
-            <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-3">
-              <dt className="text-xs font-medium text-amber-100">Em revisão</dt>
-              <dd className="mt-0.5 text-2xl font-bold text-amber-50">{number(service?.review_fill)}</dd>
-            </div>
-            <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 p-3">
-              <dt className="text-xs font-medium text-rose-100">Sem mapeamento</dt>
-              <dd className="mt-0.5 text-2xl font-bold text-rose-50">{number(service?.unmapped)}</dd>
-            </div>
-          </dl>
-        </Card>
+        </details>
       </section>
-
-      <Card className="p-4 md:p-5">
-        <SectionTitle
-          title="Campos que seguem manuais"
-          description="Nunca entram na automação recorrente — trate-os diretamente no Kommo."
-          icon={<Info className="h-3.5 w-3.5" />}
-        />
-        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-3 lg:grid-cols-5">
-          {["Retorno", "Consultor", "Atendido por", "Pagamento", "Forma de resgate"].map((item) => (
-            <div
-              key={item}
-              className="rounded-xl border border-white/10 bg-white/[0.035] p-3 text-center transition hover:border-white/20 hover:bg-white/[0.06]"
-            >
-              <p className="text-xs font-semibold text-white">{item}</p>
-            </div>
-          ))}
-        </div>
-      </Card>
     </div>
   );
 }
@@ -2118,63 +1839,41 @@ function HistoryPage({
   const lastStamp = useMemo(() => (runs.length ? formatRunStamp(runs[0]) : null), [runs]);
 
   return (
-    <div className="space-y-4">
-      <Card className="hero-gradient p-5 md:p-6">
+    <div className="space-y-3">
+      <Card className="p-4 md:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-2xl">
-            <Pill tone="info" icon={<History className="h-3 w-3" />}>
+          <div>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
               Histórico
-            </Pill>
-            <h2 className="mt-3 text-2xl font-bold tracking-tight text-white md:text-3xl">
-              Clientes enviados ao Kommo
             </h2>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              Cada item mostra quando o envio ocorreu e quais clientes foram atualizados no Kommo.
-              Pesquise por nome para rastrear um paciente específico.
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Envios feitos ao Kommo e resultado de cada ciclo.
             </p>
             {lastStamp ? (
-              <p className="mt-2 text-xs text-slate-400">
-                Último envio: <span className="font-semibold text-white">{lastStamp}</span>
+              <p className="mt-1 text-xs text-slate-500">
+                Último envio: <span className="font-medium text-slate-700">{lastStamp}</span>
               </p>
             ) : null}
           </div>
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
-            <div className="surface-raised rounded-xl border border-emerald-400/30 px-3 py-2 text-center">
-              <p className="text-2xl font-bold text-emerald-200">{number(totalLeads)}</p>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/80">
-                envios ok
-              </p>
+          <dl className="grid grid-cols-3 divide-x divide-slate-200 rounded-md border border-slate-200 bg-slate-50">
+            <div className="px-4 py-2">
+              <dt className="text-xs font-medium text-slate-500">Ok</dt>
+              <dd className="text-xl font-semibold text-emerald-700">{number(totalLeads)}</dd>
             </div>
-            <div className="surface-raised rounded-xl border border-white/10 px-3 py-2 text-center">
-              <p className="text-2xl font-bold text-white">{number(runs.length)}</p>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
-                ciclos
-              </p>
+            <div className="px-4 py-2">
+              <dt className="text-xs font-medium text-slate-500">Ciclos</dt>
+              <dd className="text-xl font-semibold text-slate-950">{number(runs.length)}</dd>
             </div>
-            <div
-              className={cx(
-                "surface-raised rounded-xl border px-3 py-2 text-center",
-                totalErrors > 0 ? "border-rose-400/40" : "border-white/10"
-              )}
-            >
-              <p
-                className={cx(
-                  "text-2xl font-bold",
-                  totalErrors > 0 ? "text-rose-200" : "text-slate-300"
-                )}
-              >
+            <div className="px-4 py-2">
+              <dt className="text-xs font-medium text-slate-500">Erros</dt>
+              <dd className={cx("text-xl font-semibold", totalErrors > 0 ? "text-rose-700" : "text-slate-500")}>
                 {number(totalErrors)}
-              </p>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-300">
-                erros
-              </p>
+              </dd>
             </div>
-          </div>
+          </dl>
         </div>
-      </Card>
 
-      <Card className="p-4 md:p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex-1 sm:max-w-sm">
             <input
               type="search"
@@ -2189,7 +1888,7 @@ function HistoryPage({
             type="button"
             onClick={() => void handleRefresh()}
             disabled={refreshing}
-            className="btn-ghost inline-flex h-9 items-center justify-center gap-1.5 rounded-xl px-3 text-xs font-semibold disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-ghost inline-flex h-9 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
           >
             {refreshing ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -2268,25 +1967,21 @@ function LoginScreen({
   }
 
   return (
-    <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-100">
-      <section className="surface w-full max-w-md rounded-2xl border border-white/10 p-6 shadow-2xl shadow-black/40">
+    <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-950">
+      <section className="surface w-full max-w-md rounded-lg border border-slate-200 p-6 shadow-sm shadow-slate-200/70">
         <div className="flex items-center gap-3">
-          <div
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-xl text-slate-950 shadow-lg shadow-emerald-500/30"
-            style={{ background: "linear-gradient(135deg, #34d399 0%, #22d3ee 100%)" }}
-            aria-hidden
-          >
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-700" aria-hidden>
             <LockKeyhole className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
               Mirella Sync
             </p>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Acesso restrito</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Acesso restrito</h1>
           </div>
         </div>
 
-        <p className="mt-5 text-sm leading-6 text-slate-300">
+        <p className="mt-5 text-sm leading-6 text-slate-500">
           Entre com o usuário autorizado para acessar a rotina de sincronização do Kommo.
         </p>
 
@@ -2301,7 +1996,7 @@ function LoginScreen({
               onChange={(event) => setUsername(event.target.value.toUpperCase())}
               placeholder="MIRELLA RABELLO"
               autoComplete="username"
-              className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 text-sm font-semibold text-white placeholder:text-slate-600 focus:border-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-400/20"
+              className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-950 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
               disabled={loading || submitting}
             />
           </div>
@@ -2316,7 +2011,7 @@ function LoginScreen({
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               autoComplete="current-password"
-              className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 text-sm text-white placeholder:text-slate-600 focus:border-emerald-400/50 focus:outline-none focus:ring-2 focus:ring-emerald-400/20"
+              className="mt-2 h-11 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
               disabled={loading || submitting}
             />
           </div>
@@ -2330,14 +2025,14 @@ function LoginScreen({
           <button
             type="submit"
             disabled={loading || submitting || !username.trim() || !password}
-            className="btn-primary inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl px-5 text-sm"
+            className="btn-primary inline-flex h-11 w-full items-center justify-center gap-2 rounded-md px-5 text-sm"
           >
             {loading || submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
             Entrar
           </button>
         </form>
 
-        <div className="mt-5 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-xs leading-5 text-slate-400">
+        <div className="mt-5 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-5 text-slate-500">
           Configuração remota: {auth?.gistConfigured ? "Gist conectado" : "Gist não configurado"}
         </div>
       </section>
@@ -2600,178 +2295,171 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   }, [anyRunning, safeRows, reviewRows]);
 
   return (
-    <div className="app-shell text-slate-100">
+    <div className="app-shell text-slate-950">
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
-      <div className="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 px-3 py-4 sm:px-5 lg:py-6">
-        <header className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <div
-              className="relative grid h-11 w-11 shrink-0 place-items-center rounded-xl text-slate-950 shadow-lg shadow-emerald-500/30"
-              style={{ background: "linear-gradient(135deg, #34d399 0%, #22d3ee 100%)" }}
-              aria-hidden
+      <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 lg:grid-cols-[232px_minmax(0,1fr)]">
+        <aside className="app-sidebar border-b border-slate-200 bg-white px-4 py-4 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
+          <div className="flex items-center justify-between gap-3 lg:block">
+            <div className="flex items-center gap-3">
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-700" aria-hidden>
+                MS
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                  Mirella Sync
+                </p>
+                <p className="text-sm font-semibold text-slate-950">Kommo</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void onLogout()}
+              className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-xs font-medium lg:hidden"
+              title={auth.username ? `Sessão: ${auth.username}` : "Sair"}
             >
-              <Sparkles className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-300">
-                Mirella Sync
-              </p>
-              <h1 className="text-xl font-bold tracking-tight text-white md:text-2xl">
-                Atualização do Kommo
-              </h1>
-              <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p>
-            </div>
+              <LogOut className="h-3.5 w-3.5" />
+              Sair
+            </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <nav className="mt-4 grid grid-cols-3 gap-1 lg:grid-cols-1" aria-label="Navegação principal">
+            <button
+              type="button"
+              onClick={() => setPage("sync")}
+              className={cx(
+                "app-nav-item",
+                page === "sync" ? "app-nav-item-active" : ""
+              )}
+              aria-current={page === "sync" ? "page" : undefined}
+            >
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              <span>Rotina</span>
+              {command.running ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPage("review")}
+              className={cx(
+                "app-nav-item",
+                page === "review" ? "app-nav-item-active" : ""
+              )}
+              aria-current={page === "review" ? "page" : undefined}
+            >
+              <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
+              <span>Pendências</span>
+              {reviewRows > 0 ? (
+                <span className="app-nav-count" aria-label={`${reviewRows} pendências`}>
+                  {reviewRows > 99 ? "99+" : reviewRows}
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setPage("history");
+                void applyHistory.refresh();
+              }}
+              className={cx(
+                "app-nav-item",
+                page === "history" ? "app-nav-item-active" : ""
+              )}
+              aria-current={page === "history" ? "page" : undefined}
+            >
+              <History className="h-3.5 w-3.5" aria-hidden />
+              <span>Histórico</span>
+            </button>
+          </nav>
+
+          <div className="mt-4 hidden space-y-3 border-t border-slate-200 pt-4 lg:block">
             <div
               className={cx(
-                "hidden items-center gap-1.5 rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide md:inline-flex",
+                "inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-medium",
                 desktop
-                  ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
-                  : "border-amber-400/30 bg-amber-400/10 text-amber-200"
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-amber-200 bg-amber-50 text-amber-700"
               )}
               aria-live="polite"
             >
-              {desktop ? (
-                <>
-                  <span className="relative inline-block h-1.5 w-1.5">
-                    <span className="absolute inset-0 rounded-full bg-emerald-400" />
-                    <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/60" />
-                  </span>
-                  Conectado
-                </>
-              ) : (
-                <>
-                  <AlertTriangle className="h-3 w-3" />
-                  Modo prévia
-                </>
-              )}
+              <span className={cx("h-1.5 w-1.5 rounded-full", desktop ? "bg-emerald-600" : "bg-amber-500")} />
+              {desktop ? "Conectado" : "Modo prévia"}
             </div>
             {anyRunning ? (
-              <div className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-cyan-200">
-                <Loader2 className="h-3 w-3 animate-spin" />
+              <div className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Processando
               </div>
             ) : null}
             <button
               type="button"
               onClick={() => void onLogout()}
-              className="hidden items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition hover:border-white/20 hover:bg-white/[0.08] hover:text-white md:inline-flex"
+              className="btn-ghost inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-md px-3 text-xs font-medium"
               title={auth.username ? `Sessão: ${auth.username}` : "Sair"}
             >
-              <LogOut className="h-3 w-3" />
+              <LogOut className="h-3.5 w-3.5" />
               Sair
             </button>
-            <nav
-              className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1"
-              aria-label="Navegação principal"
-            >
-              <button
-                type="button"
-                onClick={() => setPage("sync")}
-                className={cx(
-                  "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
-                  page === "sync"
-                    ? "bg-white text-slate-950 shadow"
-                    : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-                aria-current={page === "sync" ? "page" : undefined}
-              >
-                <Zap className="h-3.5 w-3.5" aria-hidden />
-                Rotina
-                {command.running ? (
-                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-                ) : null}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPage("review")}
-                className={cx(
-                  "relative inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
-                  page === "review"
-                    ? "bg-white text-slate-950 shadow"
-                    : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-                aria-current={page === "review" ? "page" : undefined}
-              >
-                <AlertTriangle className="h-3.5 w-3.5" aria-hidden />
-                Pendências
-                {reviewRows > 0 ? (
-                  <span
-                    className={cx(
-                      "ml-0.5 inline-flex min-w-[18px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold",
-                      page === "review" ? "bg-amber-400 text-slate-950" : "bg-amber-400/20 text-amber-200"
-                    )}
-                    aria-label={`${reviewRows} pendências`}
-                  >
-                    {reviewRows > 99 ? "99+" : reviewRows}
-                  </span>
-                ) : null}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPage("history");
-                  void applyHistory.refresh();
-                }}
-                className={cx(
-                  "inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-xs font-semibold transition",
-                  page === "history"
-                    ? "bg-white text-slate-950 shadow"
-                    : "text-slate-300 hover:bg-white/10 hover:text-white"
-                )}
-                aria-current={page === "history" ? "page" : undefined}
-              >
-                <History className="h-3.5 w-3.5" aria-hidden />
-                Histórico
-              </button>
-            </nav>
           </div>
-        </header>
+        </aside>
 
-        <main id="conteudo" className="flex-1 fade-in">
-          {page === "sync" ? (
-            <SyncPage
-              snapshot={snapshot}
-              desktop={desktop}
-              command={command}
-              applyCommand={applyCommand}
-              syncSteps={syncSteps}
-              applySteps={applySteps}
-              syncLogs={syncLogs}
-              applyLogs={applyLogs}
-              applyResults={applyResults.data}
-              safePayloadPreview={safePayloadPreview.data}
-              scheduler={scheduler.state}
-              schedulerAvailable={scheduler.available}
-              onSchedulerSetConfig={scheduler.setConfig}
-              onSchedulerRunNow={scheduler.runNow}
-              onQuickUpdate={() => runSyncTask("quick")}
-              onFullUpdate={() => runSyncTask("full")}
-              onApply={applySafePayloads}
-              onOpenReview={() => setPage("review")}
-              applyRef={applyCardRef}
-            />
-          ) : page === "review" ? (
-            <ReviewPage snapshot={snapshot} rows={review.rows} />
-          ) : (
-            <HistoryPage
-              runs={applyHistory.runs}
-              loaded={applyHistory.loaded}
-              error={applyHistory.error}
-              onRefresh={applyHistory.refresh}
-            />
-          )}
-        </main>
+        <div className="flex min-w-0 flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+          <header className="mb-4 flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h1 className="text-xl font-semibold tracking-tight text-slate-950 md:text-2xl">
+                Atualização do Kommo
+              </h1>
+              <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+            </div>
+            {anyRunning ? (
+              <div className="inline-flex items-center gap-2 rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1 text-xs font-medium text-blue-700 lg:hidden">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Processando
+              </div>
+            ) : null}
+          </header>
 
-        <footer className="mt-1 flex flex-col items-center justify-between gap-1 border-t border-white/5 pt-3 text-[10px] text-slate-500 sm:flex-row">
-          <p>Mirella Kommo Sync · dados processados localmente no seu computador</p>
-          <p className="flex items-center gap-1">
-            <Clock3 className="h-2.5 w-2.5" aria-hidden />
-            Última prévia: {timeAgo(snapshot.localFiles?.safePayloads?.modifiedUnix)}
-          </p>
-        </footer>
+          <main id="conteudo" className="flex-1 fade-in">
+            {page === "sync" ? (
+              <SyncPage
+                snapshot={snapshot}
+                desktop={desktop}
+                command={command}
+                applyCommand={applyCommand}
+                syncSteps={syncSteps}
+                applySteps={applySteps}
+                syncLogs={syncLogs}
+                applyLogs={applyLogs}
+                applyResults={applyResults.data}
+                safePayloadPreview={safePayloadPreview.data}
+                scheduler={scheduler.state}
+                schedulerAvailable={scheduler.available}
+                onSchedulerSetConfig={scheduler.setConfig}
+                onSchedulerRunNow={scheduler.runNow}
+                onQuickUpdate={() => runSyncTask("quick")}
+                onFullUpdate={() => runSyncTask("full")}
+                onApply={applySafePayloads}
+                onOpenReview={() => setPage("review")}
+                applyRef={applyCardRef}
+              />
+            ) : page === "review" ? (
+              <ReviewPage snapshot={snapshot} rows={review.rows} />
+            ) : (
+              <HistoryPage
+                runs={applyHistory.runs}
+                loaded={applyHistory.loaded}
+                error={applyHistory.error}
+                onRefresh={applyHistory.refresh}
+              />
+            )}
+          </main>
+
+          <footer className="mt-5 flex flex-col justify-between gap-1 border-t border-slate-200 pt-3 text-[11px] text-slate-500 sm:flex-row">
+            <p>Mirella Kommo Sync · dados processados localmente no computador</p>
+            <p className="flex items-center gap-1">
+              <Clock3 className="h-3 w-3" aria-hidden />
+              Última prévia: {timeAgo(snapshot.localFiles?.safePayloads?.modifiedUnix)}
+            </p>
+          </footer>
+        </div>
       </div>
     </div>
   );
