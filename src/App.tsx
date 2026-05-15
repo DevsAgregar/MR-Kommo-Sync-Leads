@@ -142,6 +142,7 @@ const DEFAULT_SCHEDULER_STATE: SchedulerState = {
 
 const LOG_BUFFER_SIZE = 400;
 const PAGE_STORAGE_KEY = "mirella.lastPage";
+const DEV_PREVIEW = import.meta.env.DEV;
 
 const fallbackSnapshot: Snapshot = {
   previewSummary: {
@@ -150,16 +151,17 @@ const fallbackSnapshot: Snapshot = {
       lead_count: 13618,
       exact_unique_match_count: 338
     },
-    safe_lead_count: 282,
-    safe_field_row_count: 964,
-    review_field_row_count: 107,
+    safe_lead_count: 3,
+    safe_field_row_count: 15,
+    review_field_row_count: 3,
     action_counts: {
-      fill_empty: 739,
-      update_if_greater: 170,
-      update_if_newer: 16,
-      merge: 133,
-      skip: 1613,
-      review: 13
+      fill_empty: 8,
+      update_if_greater: 2,
+      update_if_newer: 1,
+      sync_authoritative: 3,
+      merge: 1,
+      skip: 0,
+      review: 3
     },
     field_stats: {
       sale_value: { candidate: 255, safe_fill: 182, review_fill: 0, unmapped: 0 },
@@ -169,12 +171,12 @@ const fallbackSnapshot: Snapshot = {
       appointment: { candidate: 33, safe_fill: 33, review_fill: 0, unmapped: 0 },
       next_consultation: { candidate: 33, safe_fill: 33, review_fill: 0, unmapped: 0 },
       origin: { candidate: 216, safe_fill: 22, review_fill: 0, unmapped: 0 },
-      service: { candidate: 264, safe_fill: 65, review_fill: 94, unmapped: 13 }
+      service: { candidate: 3, safe_fill: 0, review_fill: 3, unmapped: 2 }
     }
   },
-  safePayloadCount: 282,
-  safeRowsCount: 964,
-  reviewRowsCount: 107,
+  safePayloadCount: 3,
+  safeRowsCount: 15,
+  reviewRowsCount: 3,
   localFiles: {
     env: { exists: true, bytes: 556, modifiedUnix: null },
     patientDb: { exists: true, bytes: 5251072, modifiedUnix: null },
@@ -183,6 +185,82 @@ const fallbackSnapshot: Snapshot = {
     reviewRows: { exists: true, bytes: 46694, modifiedUnix: null }
   }
 };
+
+const fallbackReviewRows: ReviewRow[] = [
+  {
+    patient_name: "Elisângela Quirino de Melo",
+    lead_name: "Elisângela Quirino de Melo",
+    field_label: "Serviço",
+    candidate_value: "Bioestimulador de Colágeno",
+    mapped_value: "",
+    confidence: "none",
+    rule: "service_mapping_bundle"
+  },
+  {
+    patient_name: "Allan Carlos Guimarães",
+    lead_name: "Allan Carlos Guimarães",
+    field_label: "Origem",
+    candidate_value: "Indicação interna",
+    mapped_value: "Indicação",
+    confidence: "medium",
+    rule: "origin_alias"
+  },
+  {
+    patient_name: "Bruna Fonseca Brandão Costa",
+    lead_name: "Bruna Fonseca Brandão Costa",
+    field_label: "Serviço",
+    candidate_value: "Glowing Complexion Essencial",
+    mapped_value: "",
+    confidence: "none",
+    rule: "service_mapping_bundle"
+  }
+];
+
+const fallbackSafePayloadPreview: SafePayloadPreview = {
+  items: [
+    { id: 24120875, lead_name: "Allan Carlos Guimarães", field_count: 6, has_price: true },
+    { id: 23428689, lead_name: "Elisângela Quirino de Melo", field_count: 5, has_price: true },
+    { id: 22154011, lead_name: "Bruna Fonseca Brandão Costa", field_count: 4, has_price: false }
+  ]
+};
+
+const fallbackApplyResults: ApplyResults = {
+  runId: "20260515_113812",
+  modifiedUnix: Math.floor(Date.now() / 1000) - 3600,
+  items: fallbackSafePayloadPreview.items.map((item) => ({
+    id: item.id,
+    lead_name: item.lead_name,
+    ok: true,
+    error: undefined
+  }))
+};
+
+const fallbackApplyHistoryRuns: ApplyHistoryRun[] = [
+  {
+    runId: "20260515_113812",
+    modifiedUnix: Math.floor(Date.now() / 1000) - 3600,
+    okCount: 3,
+    errCount: 0,
+    total: 3,
+    items: fallbackSafePayloadPreview.items.map((item) => ({
+      id: item.id,
+      leadName: item.lead_name ?? null,
+      ok: true,
+      error: null
+    }))
+  },
+  {
+    runId: "20260514_181022",
+    modifiedUnix: Math.floor(Date.now() / 1000) - 86400,
+    okCount: 1,
+    errCount: 1,
+    total: 2,
+    items: [
+      { id: 19095171, leadName: "Bruna Fonseca Brandão Costa", ok: true, error: null },
+      { id: 19874349, leadName: "Suzan de Araujo Machado", ok: false, error: "Kommo retornou rate limit temporário" }
+    ]
+  }
+];
 
 const taskSteps: Record<SyncTask | "apply", string[]> = {
   quick: ["Atualizar Clínica", "Extrair campos operacionais", "Atualizar Kommo", "Gerar prévia"],
@@ -203,9 +281,18 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function isTauriUnavailableError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.includes("invoke") || message.includes("__TAURI__");
+}
+
+function hasTauriRuntime() {
+  return typeof window !== "undefined" && Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
 function formatAppError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  if (message.includes("invoke") || message.includes("__TAURI__")) {
+  if (isTauriUnavailableError(error)) {
     return "Abra pelo aplicativo desktop para acessar os dados locais e executar sincronizações.";
   }
   return message || "Não foi possível concluir a ação.";
@@ -318,7 +405,11 @@ function useReviewRows() {
         return item as unknown as ReviewRow;
       });
       setRows(mapped);
-    } catch {
+    } catch (error) {
+      if (DEV_PREVIEW && isTauriUnavailableError(error)) {
+        setRows(fallbackReviewRows);
+        return;
+      }
       setRows([]);
     }
   }, []);
@@ -409,7 +500,11 @@ function useApplyResults() {
     try {
       const result = await call<ApplyResults>("read_apply_results");
       setData(result ?? { runId: null, modifiedUnix: null, items: [] });
-    } catch {
+    } catch (error) {
+      if (DEV_PREVIEW && isTauriUnavailableError(error)) {
+        setData(fallbackApplyResults);
+        return;
+      }
       setData({ runId: null, modifiedUnix: null, items: [] });
     }
   }, []);
@@ -451,6 +546,11 @@ function useApplyHistory() {
       setRuns(result?.runs ?? []);
       setError(null);
     } catch (err) {
+      if (DEV_PREVIEW && isTauriUnavailableError(err)) {
+        setRuns(fallbackApplyHistoryRuns);
+        setError(null);
+        return;
+      }
       setRuns([]);
       setError(formatAppError(err));
     } finally {
@@ -472,7 +572,11 @@ function useSafePayloadPreview() {
     try {
       const result = await call<SafePayloadPreview>("read_safe_payload_preview");
       setData(result ?? { items: [] });
-    } catch {
+    } catch (error) {
+      if (DEV_PREVIEW && isTauriUnavailableError(error)) {
+        setData(fallbackSafePayloadPreview);
+        return;
+      }
       setData({ items: [] });
     }
   }, []);
@@ -503,6 +607,7 @@ function useScheduler() {
   }, [refresh]);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
     let disposed = false;
     let dispose: (() => void) | null = null;
     void listen<SchedulerState>("scheduler-state", (event) => {
@@ -657,6 +762,16 @@ export default function App() {
       setAuth(state);
       setAuthError("");
     } catch (error) {
+      if (DEV_PREVIEW && isTauriUnavailableError(error)) {
+        setAuth({
+          required: false,
+          authenticated: true,
+          username: "DEV PREVIEW",
+          gistConfigured: false
+        });
+        setAuthError("");
+        return;
+      }
       setAuth(null);
       setAuthError(formatAppError(error));
     } finally {
@@ -1146,99 +1261,105 @@ const AutomationCard = React.memo(function AutomationCard({
           : "muted";
 
   return (
-    <Card className="p-3 md:p-4">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold text-slate-950">Automação</h3>
-            <Pill tone={statusTone} icon={<Timer className="h-3 w-3" />}>
-              {state.running
-                ? "executando"
-                : state.enabled
-                  ? "ativa"
-                  : state.pausedReason
-                    ? "pausada"
-                    : "desativada"}
-            </Pill>
+    <details
+      className="minimal-details"
+      open={state.enabled || state.running || state.lastStatus === "error" ? true : undefined}
+    >
+      <summary>
+        <span className="inline-flex items-center gap-2">
+          Automação
+          <Pill tone={statusTone} icon={<Timer className="h-3 w-3" />}>
+            {state.running
+              ? "executando"
+              : state.enabled
+                ? "ativa"
+                : state.pausedReason
+                  ? "pausada"
+                  : "desativada"}
+          </Pill>
+        </span>
+      </summary>
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs text-slate-500">
+              {state.enabled ? (
+                <>
+                  Próxima execução:{" "}
+                  <NextRunLabel
+                    running={state.running}
+                    enabled={state.enabled}
+                    nextClock={nextClock}
+                    targetUnix={state.nextRunUnix}
+                  />
+                </>
+              ) : state.lastRunUnix ? (
+                <>Último ciclo: {state.lastStatus === "ok" ? "ok" : state.lastStatus === "error" ? "falhou" : "—"} · {lastClock ?? timeAgo(state.lastRunUnix)}</>
+              ) : (
+                "Configure apenas se quiser rodar sem acionar manualmente."
+              )}
+            </p>
           </div>
-          <p className="mt-1 text-xs text-slate-500">
-            {state.enabled ? (
-              <>
-                Próxima execução:{" "}
-                <NextRunLabel
-                  running={state.running}
-                  enabled={state.enabled}
-                  nextClock={nextClock}
-                  targetUnix={state.nextRunUnix}
-                />
-              </>
-            ) : state.lastRunUnix ? (
-              <>Último ciclo: {state.lastStatus === "ok" ? "ok" : state.lastStatus === "error" ? "falhou" : "—"} · {lastClock ?? timeAgo(state.lastRunUnix)}</>
-            ) : (
-              "Configure apenas se quiser rodar sem acionar manualmente."
-            )}
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <button
-            type="button"
-            onClick={() => void handleToggle()}
-            disabled={disabledAll || pending !== null}
-            className={cx(
-              "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-              state.enabled
-                ? "border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
-                : "btn-primary"
-            )}
-            aria-busy={pending === "toggle"}
-          >
-            {pending === "toggle" ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            ) : state.enabled ? (
-              <Pause className="h-4 w-4" aria-hidden />
-            ) : (
-              <Play className="h-4 w-4" aria-hidden />
-            )}
-            {state.enabled ? "Pausar automação" : "Ativar automação"}
-          </button>
-          <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
-            {[30, 60].map((minutes) => {
-              const active = state.intervalMinutes === minutes;
-              return (
-                <button
-                  key={minutes}
-                  type="button"
-                  onClick={() => void handleIntervalChange(minutes)}
-                  disabled={disabledAll || pending !== null}
-                  className={cx(
-                    "inline-flex h-7 flex-1 items-center justify-center gap-1 rounded px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
-                    active
-                      ? "bg-white text-slate-950"
-                      : "text-slate-600 hover:bg-white hover:text-slate-950"
-                  )}
-                  aria-pressed={active}
-                >
-                  {minutes === 60 ? "1 h" : `${minutes} min`}
-                </button>
-              );
-            })}
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => void handleToggle()}
+              disabled={disabledAll || pending !== null}
+              className={cx(
+                "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                state.enabled
+                  ? "border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
+                  : "btn-primary"
+              )}
+              aria-busy={pending === "toggle"}
+            >
+              {pending === "toggle" ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              ) : state.enabled ? (
+                <Pause className="h-4 w-4" aria-hidden />
+              ) : (
+                <Play className="h-4 w-4" aria-hidden />
+              )}
+              {state.enabled ? "Pausar automação" : "Ativar automação"}
+            </button>
+            <div className="flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 p-1">
+              {[30, 60].map((minutes) => {
+                const active = state.intervalMinutes === minutes;
+                return (
+                  <button
+                    key={minutes}
+                    type="button"
+                    onClick={() => void handleIntervalChange(minutes)}
+                    disabled={disabledAll || pending !== null}
+                    className={cx(
+                      "inline-flex h-7 flex-1 items-center justify-center gap-1 rounded px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
+                      active
+                        ? "bg-white text-slate-950"
+                        : "text-slate-600 hover:bg-white hover:text-slate-950"
+                    )}
+                    aria-pressed={active}
+                  >
+                    {minutes === 60 ? "1 h" : `${minutes} min`}
+                  </button>
+                );
+              })}
+            </div>
+            <button
+              type="button"
+              onClick={() => void handleRunNow()}
+              disabled={disabledAll || busy || pending !== null}
+              className="btn-ghost inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
+              aria-busy={pending === "now"}
+            >
+              {pending === "now" || state.running ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Executar agora
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => void handleRunNow()}
-            disabled={disabledAll || busy || pending !== null}
-            className="btn-ghost inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-60"
-            aria-busy={pending === "now"}
-          >
-            {pending === "now" || state.running ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" aria-hidden />
-            )}
-            Executar agora
-          </button>
         </div>
-      </div>
 
       {state.pausedReason ? (
         <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -1267,7 +1388,8 @@ const AutomationCard = React.memo(function AutomationCard({
           <span>A automação só funciona com o app desktop em execução.</span>
         </div>
       ) : null}
-    </Card>
+      </div>
+    </details>
   );
 });
 
@@ -1352,6 +1474,7 @@ function SyncPage({
               onClick={onQuickUpdate}
               disabled={pipelineBusy}
               aria-busy={quickRunning}
+              title="Atualiza Clínica, campos operacionais, Kommo e prévia"
             >
               {quickRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <RefreshCw className="h-4 w-4" aria-hidden />}
               Atualizar
@@ -1362,6 +1485,7 @@ function SyncPage({
               onClick={onFullUpdate}
               disabled={pipelineBusy}
               aria-busy={fullRunning}
+              title="Reprocessa a base completa antes de gerar a prévia"
             >
               {fullRunning ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Database className="h-4 w-4" aria-hidden />}
               Completa
@@ -1372,6 +1496,7 @@ function SyncPage({
               onClick={onApply}
               disabled={pipelineBusy || !desktop || safeRows <= 0}
               aria-busy={applyCommand.running}
+              title={!desktop ? "Disponível apenas no app desktop" : safeRows <= 0 ? "Não há campos prontos para enviar" : "Envia apenas atualizações seguras ao Kommo"}
             >
               {applyCommand.running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
               Enviar
@@ -1554,7 +1679,7 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
       <Card className="p-4 md:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Pendências</h2>
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-950">Revisão necessária</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">
               Estes itens ficam fora do envio automático até você ajustar o mapeamento.
             </p>
@@ -1585,7 +1710,57 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
               />
             </div>
           </div>
-          <div className="thin-scrollbar mt-4 max-h-[480px] overflow-auto rounded-md border border-slate-200">
+          <div className="mt-4 grid gap-2 md:hidden">
+            {visibleRows.map((row, index) => (
+              <article
+                key={`${row.patient_name}-${row.field_label}-card-${index}`}
+                className="rounded-md border border-slate-200 bg-white p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-950">
+                      {row.patient_name || row.lead_name}
+                    </p>
+                    <p className="mt-0.5 text-[11px] font-medium text-slate-500">{row.field_label}</p>
+                  </div>
+                  {row.mapped_value ? (
+                    <Pill tone="info">sugestão</Pill>
+                  ) : (
+                    <Pill tone="warn">sem regra</Pill>
+                  )}
+                </div>
+                <dl className="mt-3 grid gap-2 text-xs">
+                  <div>
+                    <dt className="font-medium text-slate-500">Valor da clínica</dt>
+                    <dd className="mt-0.5 break-words text-slate-700">{row.candidate_value || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="font-medium text-slate-500">Sugestão</dt>
+                    <dd className="mt-0.5 break-words text-slate-700">{row.mapped_value || "Sem regra automática"}</dd>
+                  </div>
+                </dl>
+              </article>
+            ))}
+            {!filtered.length ? (
+              <div className="rounded-md border border-slate-200 bg-white px-3 py-8 text-center text-slate-500">
+                {rows.length ? (
+                  <>
+                    <Info className="mx-auto h-7 w-7 text-blue-500" aria-hidden />
+                    <p className="mt-2 text-sm font-semibold text-slate-950">Nada encontrado</p>
+                    <p className="mt-1 text-xs text-slate-500">Tente outro termo no filtro.</p>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="mx-auto h-7 w-7 text-emerald-600" aria-hidden />
+                    <p className="mt-2 text-sm font-semibold text-slate-950">Nada para revisar</p>
+                    <p className="mt-1 text-xs text-slate-500">Toda a base está com mapeamentos automáticos.</p>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <div className="thin-scrollbar mt-4 hidden max-h-[480px] overflow-auto rounded-md border border-slate-200 md:block">
             <table className="w-full min-w-[720px] border-collapse text-left text-xs">
               <thead className="sticky top-0 z-10 bg-slate-50 text-[10px] uppercase text-slate-500">
                 <tr>
@@ -1736,6 +1911,7 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
   }, [run.items, term]);
   if (term && filteredItems.length === 0) return null;
   const visible = expanded ? filteredItems : filteredItems.slice(0, 8);
+  const canExpand = filteredItems.length > 8;
   return (
     <Card className="p-4 md:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1755,22 +1931,24 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
             {timeAgo(run.modifiedUnix)} · execução {run.runId}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[11px] font-semibold"
-          aria-expanded={expanded}
-        >
-          {expanded ? (
-            <>
-              Recolher <ChevronUp className="h-3 w-3" />
-            </>
-          ) : (
-            <>
-              Ver todos ({number(filteredItems.length)}) <ChevronDown className="h-3 w-3" />
-            </>
-          )}
-        </button>
+        {canExpand ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[11px] font-semibold"
+            aria-expanded={expanded}
+          >
+            {expanded ? (
+              <>
+                Recolher <ChevronUp className="h-3 w-3" />
+              </>
+            ) : (
+              <>
+                Ver todos ({number(filteredItems.length)}) <ChevronDown className="h-3 w-3" />
+              </>
+            )}
+          </button>
+        ) : null}
       </div>
       <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
         {visible.map((item) => (
@@ -1843,6 +2021,15 @@ function HistoryPage({
   const totalLeads = totals.leads;
   const totalErrors = totals.errors;
   const lastStamp = useMemo(() => (runs.length ? formatRunStamp(runs[0]) : null), [runs]);
+  const historyTerm = deferredQuery.trim().toLowerCase();
+  const visibleRuns = useMemo(() => {
+    if (!historyTerm) return runs;
+    return runs.filter((run) =>
+      run.items.some((item) =>
+        (item.leadName ?? `lead ${item.id}`).toLowerCase().includes(historyTerm)
+      )
+    );
+  }, [runs, historyTerm]);
 
   return (
     <div className="space-y-3">
@@ -1850,7 +2037,7 @@ function HistoryPage({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h2 className="text-2xl font-semibold tracking-tight text-slate-950">
-              Histórico
+              Envios realizados
             </h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
               Envios feitos ao Kommo e resultado de cada ciclo.
@@ -1929,9 +2116,15 @@ function HistoryPage({
           <p className="mt-2 text-sm font-semibold text-slate-950">Nenhum envio registrado ainda</p>
           <p className="mt-1">Assim que você aplicar atualizações ao Kommo, elas aparecem aqui.</p>
         </Card>
+      ) : visibleRuns.length === 0 ? (
+        <Card className="p-6 text-center text-xs text-slate-500">
+          <Info className="mx-auto h-7 w-7 text-blue-500" aria-hidden />
+          <p className="mt-2 text-sm font-semibold text-slate-950">Nada encontrado</p>
+          <p className="mt-1">Tente outro nome no campo de pesquisa.</p>
+        </Card>
       ) : (
         <div className="space-y-3">
-          {runs.map((run, index) => (
+          {visibleRuns.map((run, index) => (
             <HistoryRunCard
               key={run.runId}
               run={run}
@@ -2046,10 +2239,24 @@ function LoginScreen({
   );
 }
 
+function parsePage(value: string | null): Page | null {
+  if (value === "sync" || value === "rotina") return "sync";
+  if (value === "review" || value === "pendencias") return "review";
+  if (value === "history" || value === "historico") return "history";
+  return null;
+}
+
+function pageSlug(page: Page) {
+  return page === "sync" ? "rotina" : page === "review" ? "pendencias" : "historico";
+}
+
 function loadInitialPage(): Page {
   try {
+    const requested = parsePage(new URLSearchParams(window.location.search).get("page"));
+    if (requested) return requested;
     const stored = window.localStorage.getItem(PAGE_STORAGE_KEY);
-    if (stored === "sync" || stored === "review" || stored === "history") return stored;
+    const parsed = parsePage(stored);
+    if (parsed) return parsed;
   } catch {
     // ignore
   }
@@ -2075,6 +2282,12 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   useEffect(() => {
     try {
       window.localStorage.setItem(PAGE_STORAGE_KEY, page);
+      const url = new URL(window.location.href);
+      const nextPage = pageSlug(page);
+      if (url.searchParams.get("page") !== nextPage) {
+        url.searchParams.set("page", nextPage);
+        window.history.replaceState(null, "", `${url.pathname}?${url.searchParams.toString()}${url.hash}`);
+      }
     } catch {
       // ignore
     }
@@ -2104,6 +2317,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   const flushScheduledRef = useRef(false);
 
   useEffect(() => {
+    if (!hasTauriRuntime()) return;
     let disposed = false;
     const unsubs: Array<() => void> = [];
 
@@ -2297,8 +2511,15 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
 
   const subtitle = useMemo(() => {
     if (anyRunning) return "Processando em segundo plano...";
+    if (page === "review") return `${number(reviewRows)} itens aguardando revisão`;
+    if (page === "history") {
+      const runs = applyHistory.runs.length;
+      return runs ? `${number(runs)} ciclos registrados` : "Nenhum envio registrado ainda";
+    }
     return `${number(safeRows)} campos prontos · ${number(reviewRows)} para revisar`;
-  }, [anyRunning, safeRows, reviewRows]);
+  }, [anyRunning, page, applyHistory.runs.length, safeRows, reviewRows]);
+
+  const pageTitle = page === "sync" ? "Rotina" : page === "review" ? "Pendências" : "Histórico";
 
   return (
     <div className="app-shell text-slate-950">
@@ -2411,7 +2632,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
           <header className="mb-4 flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h1 className="text-xl font-semibold tracking-tight text-slate-950 md:text-2xl">
-                Atualização do Kommo
+                {pageTitle}
               </h1>
               <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
             </div>
