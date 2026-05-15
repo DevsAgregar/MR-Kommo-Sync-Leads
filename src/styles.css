@@ -28,6 +28,12 @@ body {
   background: #f8fafc;
 }
 
+html[data-theme="dark"],
+body[data-theme="dark"] {
+  background: #0b1120;
+  color: #e2e8f0;
+}
+
 button,
 input,
 select,
@@ -279,6 +285,42 @@ textarea:focus-visible,
   color: #64748b;
 }
 
+.theme-toggle {
+  display: inline-flex;
+  min-height: 2.25rem;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.theme-toggle:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.theme-toggle-compact {
+  width: 2.25rem;
+  padding-inline: 0;
+}
+
+.theme-toggle-compact span {
+  display: none;
+}
+
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -312,4 +354,200 @@ textarea:focus-visible,
 .app-shell input::placeholder,
 .app-shell textarea::placeholder {
   color: #94a3b8 !important;
+}
+
+.app-shell[data-theme="dark"] {
+  background: #0b1120;
+  color: #e2e8f0;
+}
+
+.app-shell[data-theme="dark"] .app-sidebar,
+.app-shell[data-theme="dark"] .surface,
+.app-shell[data-theme="dark"] .minimal-details,
+.app-shell[data-theme="dark"] :where(.bg-white) {
+  background-color: #111827;
+}
+
+.app-shell[data-theme="dark"] :where(.bg-slate-50, .bg-slate-100, .bg-slate-50\/60) {
+  background-color: #172033;
+}
+
+.app-shell[data-theme="dark"] :where(.border-slate-200, .border-slate-300) {
+  border-color: #334155;
+}
+
+.app-shell[data-theme="dark"] :where(.divide-slate-200) > :not([hidden]) ~ :not([hidden]) {
+  border-color: #334155;
+}
+
+.app-shell[data-theme="dark"] :where(.text-slate-950, .text-slate-900, .text-slate-800) {
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] :where(.text-slate-700, .text-slate-600) {
+  color: #cbd5e1;
+}
+
+.app-shell[data-theme="dark"] :where(.text-slate-500, .text-slate-400) {
+  color: #94a3b8;
+}
+
+.app-shell[data-theme="dark"] :where(.placeholder\:text-slate-400)::placeholder {
+  color: #64748b;
+}
+
+.app-shell[data-theme="dark"] :where(.hover\:bg-slate-50:hover, .hover\:bg-white:hover) {
+  background-color: #1e293b;
+}
+
+.app-shell[data-theme="dark"] :where(.hover\:text-slate-950:hover) {
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] :where(.hover\:border-slate-300:hover) {
+  border-color: #475569;
+}
+
+.app-shell[data-theme="dark"] .app-nav-item {
+  color: #cbd5e1;
+}
+
+.app-shell[data-theme="dark"] .app-nav-item:hover {
+  border-color: #334155;
+  background: #172033;
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] .app-nav-item-active {
+  border-color: #475569;
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] .app-nav-count {
+  background: #78350f;
+  color: #fde68a;
+}
+
+.app-shell[data-theme="dark"] .minimal-details > summary {
+  color: #cbd5e1;
+}
+
+.app-shell[data-theme="dark"] .minimal-details > summary::after {
+  color: #94a3b8;
+}
+
+.app-shell[data-theme="dark"] .minimal-details[open] > summary {
+  border-bottom-color: #334155;
+}
+
+.app-shell[data-theme="dark"] .btn-primary {
+  background: #f8fafc;
+  border-color: #f8fafc;
+  color: #0f172a;
+}
+
+.app-shell[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  background: #e2e8f0;
+  border-color: #e2e8f0;
+}
+
+.app-shell[data-theme="dark"] .btn-primary:disabled,
+.app-shell[data-theme="dark"] .btn-apply:disabled {
+  background: #334155;
+  border-color: #334155;
+  color: #94a3b8;
+}
+
+.app-shell[data-theme="dark"] .btn-ghost,
+.app-shell[data-theme="dark"] .theme-toggle {
+  background: #111827;
+  border-color: #334155;
+  color: #cbd5e1;
+}
+
+.app-shell[data-theme="dark"] .btn-ghost:hover:not(:disabled),
+.app-shell[data-theme="dark"] .theme-toggle:hover {
+  background: #1e293b;
+  border-color: #475569;
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] .btn-apply {
+  background: #059669;
+  border-color: #059669;
+}
+
+.app-shell[data-theme="dark"] .btn-apply:hover:not(:disabled) {
+  background: #10b981;
+  border-color: #10b981;
+}
+
+.app-shell[data-theme="dark"] input,
+.app-shell[data-theme="dark"] select,
+.app-shell[data-theme="dark"] textarea {
+  background: #0f172a;
+  border-color: #334155;
+  color: #f8fafc;
+}
+
+.app-shell[data-theme="dark"] input::placeholder,
+.app-shell[data-theme="dark"] textarea::placeholder {
+  color: #64748b !important;
+}
+
+.app-shell[data-theme="dark"] :where(.focus\:border-blue-400:focus) {
+  border-color: #60a5fa;
+}
+
+.app-shell[data-theme="dark"] :where(.focus\:ring-blue-100:focus) {
+  --tw-ring-color: rgb(37 99 235 / 0.28);
+}
+
+.app-shell[data-theme="dark"] :where(.bg-blue-50) {
+  background-color: #172554;
+}
+
+.app-shell[data-theme="dark"] :where(.border-blue-200, .border-blue-300) {
+  border-color: #1d4ed8;
+}
+
+.app-shell[data-theme="dark"] :where(.text-blue-500, .text-blue-700, .text-blue-800) {
+  color: #93c5fd;
+}
+
+.app-shell[data-theme="dark"] :where(.bg-emerald-50) {
+  background-color: #052e2b;
+}
+
+.app-shell[data-theme="dark"] :where(.border-emerald-200, .border-emerald-300) {
+  border-color: #047857;
+}
+
+.app-shell[data-theme="dark"] :where(.text-emerald-600, .text-emerald-700, .text-emerald-800) {
+  color: #6ee7b7;
+}
+
+.app-shell[data-theme="dark"] :where(.bg-amber-50) {
+  background-color: #451a03;
+}
+
+.app-shell[data-theme="dark"] :where(.border-amber-200, .border-amber-300) {
+  border-color: #92400e;
+}
+
+.app-shell[data-theme="dark"] :where(.text-amber-500, .text-amber-700, .text-amber-800) {
+  color: #fcd34d;
+}
+
+.app-shell[data-theme="dark"] :where(.bg-rose-50) {
+  background-color: #4c0519;
+}
+
+.app-shell[data-theme="dark"] :where(.border-rose-200, .border-rose-300) {
+  border-color: #be123c;
+}
+
+.app-shell[data-theme="dark"] :where(.text-rose-700, .text-rose-800, .text-rose-900) {
+  color: #fda4af;
 }

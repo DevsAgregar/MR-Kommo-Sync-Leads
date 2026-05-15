@@ -13,10 +13,12 @@ import {
   LockKeyhole,
   Loader2,
   LogOut,
+  Moon,
   Pause,
   Play,
   RefreshCw,
   Send,
+  Sun,
   Terminal,
   Timer,
   Users,
@@ -76,6 +78,7 @@ type ReviewRow = {
 };
 
 type Page = "sync" | "review" | "history";
+type ThemeMode = "light" | "dark";
 type SyncTask = "clinic" | "operational" | "kommo" | "preview" | "all" | "quick" | "full";
 type StepStatus = "idle" | "running" | "done" | "error";
 type Flow = "sync" | "apply";
@@ -142,6 +145,7 @@ const DEFAULT_SCHEDULER_STATE: SchedulerState = {
 
 const LOG_BUFFER_SIZE = 400;
 const PAGE_STORAGE_KEY = "mirella.lastPage";
+const THEME_STORAGE_KEY = "mirella.theme";
 const DEV_PREVIEW = import.meta.env.DEV;
 
 const fallbackSnapshot: Snapshot = {
@@ -706,6 +710,17 @@ function useElapsed(startedAt?: number, finishedAt?: number) {
   return Math.max(0, end - startedAt);
 }
 
+function loadInitialTheme(): ThemeMode {
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+    if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) return "dark";
+  } catch {
+    // ignore
+  }
+  return "light";
+}
+
 const Card = React.forwardRef<HTMLElement, { children: React.ReactNode; className?: string }>(
   function Card({ children, className }, ref) {
     return (
@@ -750,10 +765,50 @@ function Pill({
   );
 }
 
+function ThemeToggle({
+  theme,
+  onToggle,
+  compact = false
+}: {
+  theme: ThemeMode;
+  onToggle: () => void;
+  compact?: boolean;
+}) {
+  const dark = theme === "dark";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className={cx("theme-toggle", compact && "theme-toggle-compact")}
+      aria-pressed={dark}
+      title={dark ? "Mudar para tema claro" : "Mudar para tema escuro"}
+    >
+      {dark ? <Moon className="h-3.5 w-3.5" aria-hidden /> : <Sun className="h-3.5 w-3.5" aria-hidden />}
+      <span>{dark ? "Escuro" : "Claro"}</span>
+    </button>
+  );
+}
+
 export default function App() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [loadingAuth, setLoadingAuth] = useState(true);
   const [authError, setAuthError] = useState("");
+  const [theme, setTheme] = useState<ThemeMode>(() => loadInitialTheme());
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    document.body.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // ignore
+    }
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((value) => (value === "dark" ? "light" : "dark"));
+  }, []);
 
   const refreshAuth = useCallback(async () => {
     setLoadingAuth(true);
@@ -812,12 +867,14 @@ export default function App() {
         auth={auth}
         loading={loadingAuth}
         error={authError}
+        theme={theme}
+        onToggleTheme={toggleTheme}
         onLogin={handleLogin}
       />
     );
   }
 
-  return <AuthenticatedApp auth={auth} onLogout={handleLogout} />;
+  return <AuthenticatedApp auth={auth} theme={theme} onToggleTheme={toggleTheme} onLogout={handleLogout} />;
 }
 
 function LogTerminal({
@@ -2142,11 +2199,15 @@ function LoginScreen({
   auth,
   loading,
   error,
+  theme,
+  onToggleTheme,
   onLogin
 }: {
   auth: AuthState | null;
   loading: boolean;
   error: string;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
   onLogin: (username: string, password: string) => Promise<void>;
 }) {
   const [username, setUsername] = useState("");
@@ -2166,18 +2227,21 @@ function LoginScreen({
   }
 
   return (
-    <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-950">
+    <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-950" data-theme={theme}>
       <section className="surface w-full max-w-md rounded-lg border border-slate-200 p-6">
-        <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-700" aria-hidden>
-            <LockKeyhole className="h-6 w-6" />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-700" aria-hidden>
+              <LockKeyhole className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+                Mirella Sync
+              </p>
+              <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Acesso restrito</h1>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Mirella Sync
-            </p>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Acesso restrito</h1>
-          </div>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
         </div>
 
         <p className="mt-5 text-sm leading-6 text-slate-500">
@@ -2263,7 +2327,17 @@ function loadInitialPage(): Page {
   return "sync";
 }
 
-function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () => Promise<void> }) {
+function AuthenticatedApp({
+  auth,
+  theme,
+  onToggleTheme,
+  onLogout
+}: {
+  auth: AuthState;
+  theme: ThemeMode;
+  onToggleTheme: () => void;
+  onLogout: () => Promise<void>;
+}) {
   const { snapshot, desktop, refresh } = useSnapshot();
   const review = useReviewRows();
   const applyResults = useApplyResults();
@@ -2522,7 +2596,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
   const pageTitle = page === "sync" ? "Rotina" : page === "review" ? "Pendências" : "Histórico";
 
   return (
-    <div className="app-shell text-slate-950">
+    <div className="app-shell text-slate-950" data-theme={theme}>
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
       <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 lg:grid-cols-[232px_minmax(0,1fr)]">
         <aside className="app-sidebar border-b border-slate-200 bg-white px-4 py-4 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
@@ -2538,15 +2612,18 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
                 <p className="text-sm font-semibold text-slate-950">Kommo</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => void onLogout()}
-              className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-xs font-medium lg:hidden"
-              title={auth.username ? `Sessão: ${auth.username}` : "Sair"}
-            >
-              <LogOut className="h-3.5 w-3.5" />
-              Sair
-            </button>
+            <div className="flex items-center gap-2 lg:hidden">
+              <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
+              <button
+                type="button"
+                onClick={() => void onLogout()}
+                className="btn-ghost inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-xs font-medium"
+                title={auth.username ? `Sessão: ${auth.username}` : "Sair"}
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                Sair
+              </button>
+            </div>
           </div>
 
           <nav className="mt-4 grid grid-cols-3 gap-1 lg:grid-cols-1" aria-label="Navegação principal">
@@ -2616,6 +2693,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
                 Processando
               </div>
             ) : null}
+            <ThemeToggle theme={theme} onToggle={onToggleTheme} />
             <button
               type="button"
               onClick={() => void onLogout()}
