@@ -203,6 +203,14 @@ function cx(...classes: Array<string | false | null | undefined>) {
   return classes.filter(Boolean).join(" ");
 }
 
+function formatAppError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.includes("invoke") || message.includes("__TAURI__")) {
+    return "Abra pelo aplicativo desktop para acessar os dados locais e executar sincronizações.";
+  }
+  return message || "Não foi possível concluir a ação.";
+}
+
 function number(value: number | undefined) {
   return new Intl.NumberFormat("pt-BR").format(value ?? 0);
 }
@@ -357,8 +365,8 @@ function SafePreviewPanel({ data }: { data: SafePayloadPreview }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Pill tone="info" icon={<ClipboardList className="h-3 w-3" />}>Prévia antes de aplicar</Pill>
-          <h3 className="mt-2 text-lg font-semibold text-white">Clientes prontos para enviar ao Kommo</h3>
-          <p className="mt-1 text-xs text-slate-300">
+          <h3 className="mt-2 text-lg font-semibold text-slate-950">Clientes prontos para enviar ao Kommo</h3>
+          <p className="mt-1 text-xs text-slate-500">
             {number(items.length)} clientes · {number(fieldCount)} campos preparados · pendências ficam fora
           </p>
         </div>
@@ -366,7 +374,7 @@ function SafePreviewPanel({ data }: { data: SafePayloadPreview }) {
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[11px] font-semibold"
           >
             {expanded ? "Mostrar menos" : `Ver todos (${number(items.length)})`}
           </button>
@@ -376,14 +384,14 @@ function SafePreviewPanel({ data }: { data: SafePayloadPreview }) {
         {visible.map((item) => (
           <li
             key={item.id}
-            className="flex items-start gap-2 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-2.5 py-1.5 text-xs text-cyan-100"
+            className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700"
           >
             <ClipboardList className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-white">
+              <p className="truncate font-medium text-slate-950">
                 {item.lead_name || `Lead ${item.id}`}
               </p>
-              <p className="truncate text-[10px] text-slate-400">
+              <p className="truncate text-[10px] text-slate-500">
                 id {item.id} · {number(item.field_count)} campo(s){item.has_price ? " · inclui Venda" : ""}
               </p>
             </div>
@@ -444,7 +452,7 @@ function useApplyHistory() {
       setError(null);
     } catch (err) {
       setRuns([]);
-      setError(err instanceof Error ? err.message : String(err ?? "erro ao carregar histórico"));
+      setError(formatAppError(err));
     } finally {
       setLoaded(true);
     }
@@ -542,8 +550,7 @@ function formatClock(unixSeconds?: number | null) {
 }
 
 // Subcomponente isolado que absorve o re-render de 1Hz do countdown para que o
-// AutomationCard inteiro (que tem gradient, animate-ping etc.) nao reconstrua
-// a cada segundo enquanto o usuario esta olhando a tela ociosa.
+// AutomationCard inteiro nao reconstrua a cada segundo enquanto a tela esta ociosa.
 const NextRunLabel = React.memo(function NextRunLabel({
   running,
   enabled,
@@ -600,7 +607,7 @@ const Card = React.forwardRef<HTMLElement, { children: React.ReactNode; classNam
       <section
         ref={ref}
         className={cx(
-          "surface rounded-lg border border-slate-200 shadow-sm shadow-slate-200/40",
+          "surface rounded-lg border border-slate-200",
           className
         )}
       >
@@ -651,7 +658,7 @@ export default function App() {
       setAuthError("");
     } catch (error) {
       setAuth(null);
-      setAuthError(String(error));
+      setAuthError(formatAppError(error));
     } finally {
       setLoadingAuth(false);
     }
@@ -668,7 +675,7 @@ export default function App() {
       setAuth(state);
       setAuthError("");
     } catch (error) {
-      setAuthError(String(error));
+      setAuthError(formatAppError(error));
       setAuth({ required: true, authenticated: false, gistConfigured: auth?.gistConfigured ?? true });
       throw error;
     }
@@ -679,7 +686,7 @@ export default function App() {
       const state = await call<AuthState>("logout_app");
       setAuth(state);
     } catch (error) {
-      setAuthError(String(error));
+      setAuthError(formatAppError(error));
       setAuth({ required: true, authenticated: false });
     }
   }
@@ -722,7 +729,7 @@ function LogTerminal({
 
   if (!lines.length) {
     return (
-      <div className="rounded-lg border border-white/10 bg-black/40 px-3 py-2 font-mono text-[11px] text-slate-500">
+      <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-500">
         {running ? "Aguardando saída do processo..." : "Sem saída registrada."}
       </div>
     );
@@ -732,7 +739,7 @@ function LogTerminal({
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="thin-scrollbar max-h-48 overflow-auto rounded-lg border border-white/10 bg-black/50 px-3 py-2 font-mono text-[11px] leading-[1.55] text-slate-300"
+      className="thin-scrollbar max-h-48 overflow-auto rounded-md border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-[11px] leading-[1.55] text-slate-700"
       role="log"
       aria-live="polite"
       aria-relevant="additions"
@@ -742,7 +749,7 @@ function LogTerminal({
           key={`${log.tsMs}-${index}`}
           className={cx(
             "whitespace-pre-wrap break-words",
-            log.stream === "stderr" ? "text-rose-300" : "text-slate-300"
+            log.stream === "stderr" ? "text-rose-700" : "text-slate-700"
           )}
         >
           {log.line || "\u00A0"}
@@ -783,17 +790,16 @@ function ProcessTracker({
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-base font-semibold text-white md:text-lg">{title}</h3>
+            <h3 className="text-base font-semibold text-slate-950 md:text-lg">{title}</h3>
             {running ? (
-              <span className="relative inline-block h-2 w-2 text-emerald-400">
-                <span className="absolute inset-0 rounded-full bg-emerald-400" />
-                <span className="absolute inset-0 animate-ping rounded-full bg-emerald-400/70" />
+              <span className="relative inline-block h-2 w-2 text-emerald-600">
+                <span className="absolute inset-0 rounded-full bg-emerald-600" />
               </span>
             ) : null}
           </div>
-          {subtitle ? <p className="mt-0.5 text-xs text-slate-400">{subtitle}</p> : null}
+          {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
         </div>
-        {running ? <Loader2 className="h-4 w-4 animate-spin text-emerald-300" aria-label="Em execução" /> : null}
+        {running ? <Loader2 className="h-4 w-4 animate-spin text-emerald-700" aria-label="Em execução" /> : null}
       </div>
 
       <ol className="mt-4 space-y-0" role="list">
@@ -857,12 +863,12 @@ function StepItem({
           className={cx(
             "relative z-10 grid h-8 w-8 place-items-center rounded-full border-2 transition",
             step.status === "done"
-              ? "border-emerald-400 bg-emerald-400/20 text-emerald-200"
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
               : step.status === "running"
-                ? "border-cyan-400 bg-cyan-400/20 text-cyan-100"
+                ? "border-blue-300 bg-blue-50 text-blue-700"
                 : step.status === "error"
-                  ? "border-rose-400 bg-rose-400/20 text-rose-200"
-                  : "border-white/15 bg-white/5 text-slate-500"
+                  ? "border-rose-300 bg-rose-50 text-rose-700"
+                  : "border-slate-200 bg-white text-slate-500"
           )}
           aria-hidden
         >
@@ -880,7 +886,7 @@ function StepItem({
           <div
             className={cx(
               "w-0.5 flex-1",
-              step.status === "done" ? "bg-gradient-to-b from-emerald-400 to-emerald-400/30" : "bg-white/10"
+              step.status === "done" ? "bg-emerald-200" : "bg-slate-200"
             )}
             aria-hidden
           />
@@ -889,14 +895,14 @@ function StepItem({
       <div className="flex-1 pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-white">{step.label}</span>
+            <span className="text-sm font-semibold text-slate-950">{step.label}</span>
             {elapsed !== null ? (
               <span
                 className={cx(
                   "rounded-full border px-2 py-0.5 font-mono text-[10px]",
                   step.status === "running"
-                    ? "border-cyan-400/40 bg-cyan-400/10 text-cyan-200"
-                    : "border-white/10 bg-white/5 text-slate-400"
+                    ? "border-blue-200 bg-blue-50 text-blue-700"
+                    : "border-slate-200 bg-slate-50 text-slate-500"
                 )}
               >
                 {formatDuration(elapsed)}
@@ -908,11 +914,11 @@ function StepItem({
               className={cx(
                 "text-[10px] font-bold uppercase tracking-wide",
                 step.status === "done"
-                  ? "text-emerald-300"
+                  ? "text-emerald-700"
                   : step.status === "running"
-                    ? "text-cyan-300"
+                    ? "text-blue-700"
                     : step.status === "error"
-                      ? "text-rose-300"
+                      ? "text-rose-700"
                       : "text-slate-500"
               )}
             >
@@ -922,7 +928,7 @@ function StepItem({
               <button
                 type="button"
                 onClick={onToggle}
-                className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-slate-300 transition hover:border-white/20 hover:bg-white/10"
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
                 aria-expanded={expanded}
                 aria-label={expanded ? "Ocultar detalhes" : "Ver detalhes"}
               >
@@ -934,11 +940,11 @@ function StepItem({
           </div>
         </div>
         {lastLine && !expanded ? (
-          <p className="mt-1 truncate font-mono text-[11px] text-slate-400" title={lastLine}>
+          <p className="mt-1 truncate font-mono text-[11px] text-slate-500" title={lastLine}>
             ↳ {lastLine}
           </p>
         ) : step.message ? (
-          <p className="mt-1 text-xs text-slate-400">{step.message}</p>
+          <p className="mt-1 text-xs text-slate-500">{step.message}</p>
         ) : null}
         {expanded ? (
           <div className="mt-2">
@@ -964,17 +970,17 @@ function DataFreshness({ snapshot }: { snapshot: Snapshot }) {
         return (
           <div
             key={label}
-            className="rounded-xl border border-white/10 bg-white/[0.035] p-3 transition hover:border-white/20 hover:bg-white/[0.06]"
+            className="rounded-md border border-slate-200 bg-slate-50 p-3 transition hover:border-slate-300 hover:bg-white"
           >
             <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold text-white">
-                <span className="text-slate-300">{icon}</span>
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-950">
+                <span className="text-slate-500">{icon}</span>
                 {label}
               </div>
               {exists ? (
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-300" aria-label="Disponível" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700" aria-label="Disponível" />
               ) : (
-                <XCircle className="h-3.5 w-3.5 text-rose-300" aria-label="Indisponível" />
+                <XCircle className="h-3.5 w-3.5 text-rose-700" aria-label="Indisponível" />
               )}
             </div>
             <p className="mt-1 text-[11px] text-slate-500">{timeAgo(meta?.modifiedUnix)}</p>
@@ -997,13 +1003,13 @@ function SectionTitle({
   return (
     <div className="flex items-start gap-2.5">
       {icon ? (
-        <div className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.04] text-emerald-200">
+        <div className="grid h-7 w-7 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-600">
           {icon}
         </div>
       ) : null}
       <div>
-        <h3 className="text-base font-semibold text-white md:text-lg">{title}</h3>
-        {description ? <p className="mt-0.5 text-xs text-slate-400 md:text-sm">{description}</p> : null}
+        <h3 className="text-base font-semibold text-slate-950 md:text-lg">{title}</h3>
+        {description ? <p className="mt-0.5 text-xs text-slate-500 md:text-sm">{description}</p> : null}
       </div>
     </div>
   );
@@ -1021,8 +1027,8 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <Pill tone="ok" icon={<CheckCircle2 className="h-3 w-3" />}>Última aplicação</Pill>
-          <h3 className="mt-2 text-lg font-semibold text-white">Clientes atualizados no Kommo</h3>
-          <p className="mt-1 text-xs text-slate-300">
+          <h3 className="mt-2 text-lg font-semibold text-slate-950">Clientes atualizados no Kommo</h3>
+          <p className="mt-1 text-xs text-slate-500">
             {number(okCount)} enviados com sucesso{errCount > 0 ? ` · ${number(errCount)} com erro` : ""}
             {data.modifiedUnix ? ` · ${timeAgo(data.modifiedUnix)}` : ""}
           </p>
@@ -1031,7 +1037,7 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+            className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[11px] font-semibold"
           >
             {expanded ? "Mostrar menos" : `Ver todos (${number(items.length)})`}
           </button>
@@ -1042,10 +1048,10 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
           <li
             key={item.id}
             className={cx(
-              "flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs",
+              "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
               item.ok
-                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
-                : "border-rose-400/40 bg-rose-500/10 text-rose-100"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-rose-200 bg-rose-50 text-rose-700"
             )}
             title={item.error || undefined}
           >
@@ -1055,10 +1061,10 @@ function AppliedPanel({ data }: { data: ApplyResults }) {
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-white">
+              <p className="truncate font-medium text-slate-950">
                 {item.lead_name || `Lead ${item.id}`}
               </p>
-              <p className="truncate text-[10px] text-slate-400">
+              <p className="truncate text-[10px] text-slate-500">
                 id {item.id}
                 {!item.ok && item.error ? ` · ${item.error}` : ""}
               </p>
@@ -1098,7 +1104,7 @@ const AutomationCard = React.memo(function AutomationCard({
     try {
       await onSetConfig(!state.enabled, state.intervalMinutes);
     } catch (error) {
-      setActionError(String(error));
+      setActionError(formatAppError(error));
     } finally {
       setPending(null);
     }
@@ -1111,7 +1117,7 @@ const AutomationCard = React.memo(function AutomationCard({
     try {
       await onSetConfig(state.enabled, minutes);
     } catch (error) {
-      setActionError(String(error));
+      setActionError(formatAppError(error));
     } finally {
       setPending(null);
     }
@@ -1123,7 +1129,7 @@ const AutomationCard = React.memo(function AutomationCard({
     try {
       await onRunNow();
     } catch (error) {
-      setActionError(String(error));
+      setActionError(formatAppError(error));
     } finally {
       setPending(null);
     }
@@ -1181,7 +1187,7 @@ const AutomationCard = React.memo(function AutomationCard({
             className={cx(
               "inline-flex h-9 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
               state.enabled
-                ? "border border-amber-400/40 bg-amber-500/15 text-amber-100 hover:border-amber-400/60 hover:bg-amber-500/20"
+                ? "border border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100"
                 : "btn-primary"
             )}
             aria-busy={pending === "toggle"}
@@ -1207,8 +1213,8 @@ const AutomationCard = React.memo(function AutomationCard({
                   className={cx(
                     "inline-flex h-7 flex-1 items-center justify-center gap-1 rounded px-3 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-60",
                     active
-                      ? "bg-white text-slate-950 shadow"
-                      : "text-slate-300 hover:bg-white/10 hover:text-white"
+                      ? "bg-white text-slate-950"
+                      : "text-slate-600 hover:bg-white hover:text-slate-950"
                   )}
                   aria-pressed={active}
                 >
@@ -1235,28 +1241,28 @@ const AutomationCard = React.memo(function AutomationCard({
       </div>
 
       {state.pausedReason ? (
-        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5">Pausada: {state.pausedReason}</span>
         </div>
       ) : null}
 
       {state.lastError && state.lastStatus === "error" ? (
-        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
           <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5 break-words">{state.lastError}</span>
         </div>
       ) : null}
 
       {actionError ? (
-        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="leading-5 break-words">{actionError}</span>
         </div>
       ) : null}
 
       {!desktop ? (
-        <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-400/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
           <span>A automação só funciona com o app desktop em execução.</span>
         </div>
@@ -1574,14 +1580,14 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Filtrar cliente ou campo..."
-                className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-400/40 focus:outline-none focus:ring-2 focus:ring-emerald-400/30 sm:w-64"
+                className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-950 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:w-64"
                 aria-label="Filtrar pendências"
               />
             </div>
           </div>
-          <div className="thin-scrollbar mt-4 max-h-[480px] overflow-auto rounded-xl border border-white/10">
+          <div className="thin-scrollbar mt-4 max-h-[480px] overflow-auto rounded-md border border-slate-200">
             <table className="w-full min-w-[720px] border-collapse text-left text-xs">
-              <thead className="sticky top-0 z-10 bg-slate-900/95 text-[10px] uppercase tracking-wide text-slate-400 backdrop-blur">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-[10px] uppercase text-slate-500">
                 <tr>
                   <th className="px-3 py-2 font-semibold">Cliente</th>
                   <th className="px-3 py-2 font-semibold">Campo</th>
@@ -1589,26 +1595,26 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                   <th className="px-3 py-2 font-semibold">Sugestão</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className="divide-y divide-slate-200">
                 {visibleRows.map((row, index) => (
                   <tr
                     key={`${row.patient_name}-${row.field_label}-${index}`}
                     className={cx(
-                      "transition hover:bg-white/[0.05]",
-                      index % 2 === 0 ? "bg-white/[0.02]" : "bg-transparent"
+                      "transition hover:bg-slate-50",
+                      index % 2 === 0 ? "bg-white" : "bg-slate-50/60"
                     )}
                   >
                     <td className="px-3 py-2">
-                      <p className="font-semibold text-white">{row.patient_name || row.lead_name}</p>
+                      <p className="font-semibold text-slate-950">{row.patient_name || row.lead_name}</p>
                       {row.lead_name && row.lead_name !== row.patient_name ? (
                         <p className="mt-0.5 text-[10px] text-slate-500">lead: {row.lead_name}</p>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2 font-medium text-slate-200">{row.field_label}</td>
-                    <td className="max-w-[240px] px-3 py-2 text-slate-300">
+                    <td className="px-3 py-2 font-medium text-slate-700">{row.field_label}</td>
+                    <td className="max-w-[240px] px-3 py-2 text-slate-600">
                       <span className="line-clamp-2">{row.candidate_value}</span>
                     </td>
-                    <td className="max-w-[200px] px-3 py-2 text-slate-300">
+                    <td className="max-w-[200px] px-3 py-2 text-slate-600">
                       {row.mapped_value ? (
                         <span className="line-clamp-2">{row.mapped_value}</span>
                       ) : (
@@ -1619,19 +1625,19 @@ function ReviewPage({ snapshot, rows }: { snapshot: Snapshot; rows: ReviewRow[] 
                 ))}
                 {!filtered.length ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-slate-400" colSpan={4}>
+                    <td className="px-3 py-8 text-center text-slate-500" colSpan={4}>
                       <div className="flex flex-col items-center gap-2">
                         {rows.length ? (
                           <>
-                            <Info className="h-7 w-7 text-cyan-400/70" aria-hidden />
-                            <p className="text-sm font-semibold text-white">Nada encontrado</p>
-                            <p className="text-xs text-slate-400">Tente outro termo no filtro.</p>
+                            <Info className="h-7 w-7 text-blue-500" aria-hidden />
+                            <p className="text-sm font-semibold text-slate-950">Nada encontrado</p>
+                            <p className="text-xs text-slate-500">Tente outro termo no filtro.</p>
                           </>
                         ) : (
                           <>
-                            <CheckCircle2 className="h-7 w-7 text-emerald-400/70" aria-hidden />
-                            <p className="text-sm font-semibold text-white">Nada para revisar</p>
-                            <p className="text-xs text-slate-400">Toda a base está com mapeamentos automáticos.</p>
+                            <CheckCircle2 className="h-7 w-7 text-emerald-600" aria-hidden />
+                            <p className="text-sm font-semibold text-slate-950">Nada para revisar</p>
+                            <p className="text-xs text-slate-500">Toda a base está com mapeamentos automáticos.</p>
                           </>
                         )}
                       </div>
@@ -1740,7 +1746,7 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
           >
             {stamp}
           </Pill>
-          <p className="mt-2 text-sm font-semibold text-white">
+          <p className="mt-2 text-sm font-semibold text-slate-950">
             {number(run.okCount)} cliente{run.okCount === 1 ? "" : "s"} atualizado
             {run.okCount === 1 ? "" : "s"}
             {run.errCount > 0 ? ` · ${number(run.errCount)} com erro` : ""}
@@ -1752,7 +1758,7 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold"
+          className="btn-ghost inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-[11px] font-semibold"
           aria-expanded={expanded}
         >
           {expanded ? (
@@ -1771,10 +1777,10 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
           <li
             key={`${run.runId}-${item.id}`}
             className={cx(
-              "flex items-start gap-2 rounded-lg border px-2.5 py-1.5 text-xs",
+              "flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-xs",
               item.ok
-                ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-100"
-                : "border-rose-400/40 bg-rose-500/10 text-rose-100"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-rose-200 bg-rose-50 text-rose-700"
             )}
             title={item.error || undefined}
           >
@@ -1784,10 +1790,10 @@ const HistoryRunCard = React.memo(function HistoryRunCard({
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
             )}
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium text-white">
+              <p className="truncate font-medium text-slate-950">
                 {item.leadName || `Lead ${item.id}`}
               </p>
-              <p className="truncate text-[10px] text-slate-400">
+              <p className="truncate text-[10px] text-slate-500">
                 id {item.id}
                 {!item.ok && item.error ? ` · ${item.error}` : ""}
               </p>
@@ -1880,7 +1886,7 @@ function HistoryPage({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Pesquisar por nome do cliente..."
-              className="h-9 w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-400/40 focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
+              className="h-9 w-full rounded-md border border-slate-200 bg-white px-3 text-xs text-slate-950 placeholder:text-slate-400 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100"
               aria-label="Pesquisar histórico"
             />
           </div>
@@ -1901,12 +1907,12 @@ function HistoryPage({
       </Card>
 
       {error ? (
-        <Card className="border-rose-400/40 bg-rose-500/10 p-4 text-xs text-rose-100">
+        <Card className="border-rose-200 bg-rose-50 p-4 text-xs text-rose-800">
           <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-300" aria-hidden />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-700" aria-hidden />
             <div className="flex-1">
-              <p className="text-sm font-semibold text-rose-100">Não foi possível carregar o histórico</p>
-              <p className="mt-1 text-[11px] leading-5 text-rose-200/90">{error}</p>
+              <p className="text-sm font-semibold text-rose-900">Não foi possível carregar o histórico</p>
+              <p className="mt-1 text-[11px] leading-5 text-rose-800">{error}</p>
             </div>
           </div>
         </Card>
@@ -1920,7 +1926,7 @@ function HistoryPage({
       ) : runs.length === 0 ? (
         <Card className="p-6 text-center text-xs text-slate-400">
           <History className="mx-auto h-7 w-7 text-slate-500" aria-hidden />
-          <p className="mt-2 text-sm font-semibold text-white">Nenhum envio registrado ainda</p>
+          <p className="mt-2 text-sm font-semibold text-slate-950">Nenhum envio registrado ainda</p>
           <p className="mt-1">Assim que você aplicar atualizações ao Kommo, elas aparecem aqui.</p>
         </Card>
       ) : (
@@ -1968,7 +1974,7 @@ function LoginScreen({
 
   return (
     <div className="app-shell flex min-h-screen items-center justify-center px-4 text-slate-950">
-      <section className="surface w-full max-w-md rounded-lg border border-slate-200 p-6 shadow-sm shadow-slate-200/70">
+      <section className="surface w-full max-w-md rounded-lg border border-slate-200 p-6">
         <div className="flex items-center gap-3">
           <div className="grid h-12 w-12 shrink-0 place-items-center rounded-md border border-slate-200 bg-slate-50 text-slate-700" aria-hidden>
             <LockKeyhole className="h-6 w-6" />
@@ -2017,7 +2023,7 @@ function LoginScreen({
           </div>
 
           {error ? (
-            <div className="rounded-xl border border-rose-400/30 bg-rose-400/10 px-4 py-3 text-sm text-rose-100">
+            <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
               {error}
             </div>
           ) : null}
@@ -2237,7 +2243,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
     } catch (error) {
       setCommand({
         running: false,
-        message: String(error),
+        message: formatAppError(error),
         ok: false,
         task,
         finishedAt: Date.now()
@@ -2276,7 +2282,7 @@ function AuthenticatedApp({ auth, onLogout }: { auth: AuthState; onLogout: () =>
     } catch (error) {
       setApplyCommand({
         running: false,
-        message: String(error),
+        message: formatAppError(error),
         ok: false,
         finishedAt: Date.now()
       });

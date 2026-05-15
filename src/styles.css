@@ -179,22 +179,10 @@ textarea:focus-visible,
   background: transparent;
 }
 
-.surface,
-.surface-raised,
-.hero-gradient {
+.surface {
   background: #ffffff;
   border-color: #e2e8f0;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.shimmer-border {
-  position: relative;
-  overflow: hidden;
-}
-
-.shimmer-border::before {
-  display: none;
+  box-shadow: none;
 }
 
 .fade-in {
@@ -291,23 +279,6 @@ textarea:focus-visible,
   color: #64748b;
 }
 
-.step-line {
-  position: absolute;
-  left: 1.25rem;
-  top: 2.5rem;
-  bottom: -0.75rem;
-  width: 1px;
-  background: #e2e8f0;
-}
-
-.step-line-done {
-  background: #86efac;
-}
-
-.pulse-dot::after {
-  display: none;
-}
-
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -330,106 +301,12 @@ textarea:focus-visible,
   z-index: 50;
 }
 
-.app-shell .text-white,
-.app-shell .text-slate-50,
-.app-shell .text-slate-100 {
-  color: #0f172a !important;
-}
-
-.app-shell .text-slate-200,
-.app-shell .text-slate-300 {
-  color: #334155 !important;
-}
-
-.app-shell .text-slate-400,
-.app-shell .text-slate-500 {
-  color: #64748b !important;
-}
-
-.app-shell [class*="text-emerald"] {
-  color: #047857 !important;
-}
-
-.app-shell [class*="text-cyan"],
-.app-shell [class*="text-blue"] {
-  color: #1d4ed8 !important;
-}
-
-.app-shell [class*="text-amber"] {
-  color: #92400e !important;
-}
-
-.app-shell [class*="text-rose"] {
-  color: #be123c !important;
-}
-
-.app-shell [class*="border-white/"] {
-  border-color: #e2e8f0 !important;
-}
-
-.app-shell [class*="divide-white/"] > :not([hidden]) ~ :not([hidden]) {
-  border-color: #e2e8f0 !important;
-}
-
-.app-shell [class*="bg-white/"],
-.app-shell [class*="bg-black/"],
-.app-shell [class*="bg-slate-900"] {
-  background-color: #f8fafc !important;
-}
-
-.app-shell [class*="bg-gradient-to"] {
-  background: #ffffff !important;
-}
-
-.app-shell [class*="bg-emerald"] {
-  background-color: #ecfdf5 !important;
-}
-
-.app-shell [class*="border-emerald"] {
-  border-color: #a7f3d0 !important;
-}
-
-.app-shell [class*="bg-cyan"],
-.app-shell [class*="bg-blue"] {
-  background-color: #eff6ff !important;
-}
-
-.app-shell [class*="border-cyan"],
-.app-shell [class*="border-blue"] {
-  border-color: #bfdbfe !important;
-}
-
-.app-shell [class*="bg-amber"] {
-  background-color: #fffbeb !important;
-}
-
-.app-shell [class*="border-amber"] {
-  border-color: #fde68a !important;
-}
-
-.app-shell [class*="bg-rose"] {
-  background-color: #fff1f2 !important;
-}
-
-.app-shell [class*="border-rose"] {
-  border-color: #fecdd3 !important;
-}
-
-.app-shell [class*="rounded-2xl"],
-.app-shell [class*="rounded-xl"] {
-  border-radius: 8px !important;
-}
-
-.app-shell [class*="shadow"] {
-  box-shadow: none !important;
-}
-
 .app-shell input,
 .app-shell select,
 .app-shell textarea {
-  background: #ffffff !important;
-  border-color: #cbd5e1 !important;
-  color: #0f172a !important;
+  background: #ffffff;
+  border-color: #cbd5e1;
+  color: #0f172a;
 }
 
 .app-shell input::placeholder,
