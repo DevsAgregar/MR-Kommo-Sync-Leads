@@ -2606,7 +2606,7 @@ function AuthenticatedApp({
   return (
     <div className="app-shell text-slate-950" data-theme={theme}>
       <a className="skip-link" href="#conteudo">Pular para o conteúdo</a>
-      <div className="mx-auto grid min-h-screen w-full max-w-[1440px] grid-cols-1 lg:grid-cols-[232px_minmax(0,1fr)]">
+      <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[248px_minmax(0,1fr)]">
         <aside className="app-sidebar border-b border-slate-200 bg-white px-4 py-4 lg:sticky lg:top-0 lg:h-screen lg:border-b-0 lg:border-r">
           <div className="flex items-center justify-between gap-3 lg:block">
             <div className="flex items-center gap-3">
@@ -2714,7 +2714,7 @@ function AuthenticatedApp({
           </div>
         </aside>
 
-        <div className="flex min-w-0 flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6">
+        <div className="flex min-w-0 flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-6 2xl:px-10">
           <header className="mb-4 flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h1 className="text-xl font-semibold tracking-tight text-slate-950 md:text-2xl">
@@ -2730,7 +2730,7 @@ function AuthenticatedApp({
             ) : null}
           </header>
 
-          <main id="conteudo" className="flex-1 fade-in">
+          <main id="conteudo" className="min-w-0 flex-1 fade-in">
             {page === "sync" ? (
               <SyncPage
                 snapshot={snapshot}
