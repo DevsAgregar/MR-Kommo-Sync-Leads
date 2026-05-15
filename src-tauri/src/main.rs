@@ -71,6 +71,7 @@ const RUNTIME_FILES: &[(&str, &str)] = &[
         "exports/sync_preview/clinic_kommo_all_actions.csv",
     ),
 ];
+const RUNTIME_SEED_MANIFEST: &str = ".runtime_seed_manifest.json";
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -714,20 +715,54 @@ fn runtime_root<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> {
     Ok(app_data)
 }
 
+fn should_overwrite_seeded_runtime_file(runtime_name: &str) -> bool {
+    runtime_name.starts_with("mappings/") || runtime_name.starts_with("exports/sync_preview/")
+}
+
+fn should_refresh_seeded_runtime_file(
+    runtime_name: &str,
+    previous_seed_hash: Option<&str>,
+    current_seed_hash: &str,
+) -> bool {
+    should_overwrite_seeded_runtime_file(runtime_name)
+        && previous_seed_hash != Some(current_seed_hash)
+}
+
+fn file_sha256_hex(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    Ok(format!("{:x}", Sha256::digest(&bytes)))
+}
+
+fn read_runtime_seed_manifest(path: &Path) -> HashMap<String, String> {
+    let Ok(text) = fs::read_to_string(path) else {
+        return HashMap::new();
+    };
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+fn write_runtime_seed_manifest(
+    path: &Path,
+    manifest: &HashMap<String, String>,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(manifest).map_err(|error| error.to_string())?;
+    fs::write(path, text).map_err(|error| error.to_string())
+}
+
 fn ensure_runtime_seeded<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, String> {
     let runtime_dir = runtime_root(handle)?;
     if is_dev_mode() {
         return Ok(runtime_dir);
     }
 
+    let manifest_path = runtime_dir.join(RUNTIME_SEED_MANIFEST);
+    let mut seed_manifest = read_runtime_seed_manifest(&manifest_path);
+    let mut seed_manifest_changed = false;
+
     for (resource_name, runtime_name) in RUNTIME_FILES {
         let target = runtime_dir.join(runtime_name);
-        if target.exists() {
-            continue;
-        }
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
         let resource = handle
             .path()
             .resolve(resource_name, BaseDirectory::Resource)
@@ -735,7 +770,35 @@ fn ensure_runtime_seeded<R: Runtime>(handle: &AppHandle<R>) -> Result<PathBuf, S
         if !resource.exists() {
             continue;
         }
+
+        let source_hash = if should_overwrite_seeded_runtime_file(runtime_name) {
+            Some(file_sha256_hex(&resource)?)
+        } else {
+            None
+        };
+        let should_refresh = source_hash.as_deref().is_some_and(|hash| {
+            should_refresh_seeded_runtime_file(
+                runtime_name,
+                seed_manifest.get(*runtime_name).map(String::as_str),
+                hash,
+            )
+        });
+
+        if target.exists() && !should_refresh {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
         fs::copy(&resource, &target).map_err(|error| error.to_string())?;
+        if let Some(hash) = source_hash {
+            seed_manifest.insert((*runtime_name).to_string(), hash);
+            seed_manifest_changed = true;
+        }
+    }
+
+    if seed_manifest_changed {
+        write_runtime_seed_manifest(&manifest_path, &seed_manifest)?;
     }
     Ok(runtime_dir)
 }
@@ -1676,4 +1739,66 @@ fn main() {
 #[tauri::command]
 fn quit_app<R: Runtime>(handle: AppHandle<R>) {
     quit_application(&handle);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_refresh_seeded_runtime_file, should_overwrite_seeded_runtime_file};
+
+    #[test]
+    fn upgrade_overwrites_versioned_mapping_and_preview_files() {
+        assert!(should_overwrite_seeded_runtime_file(
+            "mappings/clinic_kommo_service_mapping.csv"
+        ));
+        assert!(should_overwrite_seeded_runtime_file(
+            "mappings/clinic_kommo_origin_mapping.csv"
+        ));
+        assert!(should_overwrite_seeded_runtime_file(
+            "exports/sync_preview/clinic_kommo_review_rows.csv"
+        ));
+        assert!(should_overwrite_seeded_runtime_file(
+            "exports/sync_preview/clinic_kommo_preview_summary.json"
+        ));
+    }
+
+    #[test]
+    fn upgrade_preserves_user_state_and_local_databases() {
+        assert!(!should_overwrite_seeded_runtime_file("app_auth.json"));
+        assert!(!should_overwrite_seeded_runtime_file(
+            "profiles/kommo_state.enc"
+        ));
+        assert!(!should_overwrite_seeded_runtime_file(
+            "mirella_pacientes.sqlite3"
+        ));
+        assert!(!should_overwrite_seeded_runtime_file(
+            "mirella_kommo_leads.sqlite3"
+        ));
+        assert!(!should_overwrite_seeded_runtime_file(
+            "exports/kommo/kommo_leads_latest.sql"
+        ));
+    }
+
+    #[test]
+    fn upgrade_refreshes_versioned_files_only_when_bundle_hash_changes() {
+        assert!(should_refresh_seeded_runtime_file(
+            "mappings/clinic_kommo_service_mapping.csv",
+            None,
+            "new-hash"
+        ));
+        assert!(should_refresh_seeded_runtime_file(
+            "mappings/clinic_kommo_service_mapping.csv",
+            Some("old-hash"),
+            "new-hash"
+        ));
+        assert!(!should_refresh_seeded_runtime_file(
+            "mappings/clinic_kommo_service_mapping.csv",
+            Some("new-hash"),
+            "new-hash"
+        ));
+        assert!(!should_refresh_seeded_runtime_file(
+            "mirella_pacientes.sqlite3",
+            Some("old-hash"),
+            "new-hash"
+        ));
+    }
 }
